@@ -176,7 +176,8 @@ async def add_user(ctx, ids: str):
             await ctx.send(part)
 
 
-
+def fix_rtl(text):
+    return f"\u202B{text}\u202C"
 
 @bot.command(name='allistremove')
 async def remove_user(ctx, fid: int):
