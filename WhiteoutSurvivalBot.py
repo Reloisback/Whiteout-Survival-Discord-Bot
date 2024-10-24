@@ -244,12 +244,6 @@ def claim_giftcode_rewards_wos(player_id, giftcode):
         else:
             return session, "ERROR"
 
-@bot.command(name='gift')
-async def use_giftcode(ctx, giftcode: str):
-    await ctx.message.delete()
-
-    notify_message = await ctx.send(
-        content="Alliance list is being checked for Gift Code usage, the process will be completed in approximately 4 minutes."
 @bot.tree.command(name="code", description="Starts process with manual giftcode")
 async def use_giftcode(interaction:discord.Interaction, giftcode: str):
     notify_message = await interaction.response.send_message(
@@ -303,8 +297,8 @@ async def use_giftcode(interaction:discord.Interaction, giftcode: str):
         
         for result in chunk:
             received_embed.add_field(name=result, value="\u200b", inline=False)
-        sss
-        await ctx.send(embed=received_embed)
+        
+        await interaction.followup.send(embed=received_embed)
 
     for chunk in chunk_results(error_results):
         error_embed = discord.Embed(
