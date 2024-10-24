@@ -44,33 +44,33 @@ When you first run the bot, don't forget to fill in the `settings.txt` file with
 
 - To add a member, use the command:
 ```
-/allistadd playerID
+/addid playerID
 ```
 
 - To add multiple players at once, use:
 ```
-/allistadd playerID1,PlayerID2,PlayerID3
+/addid playerID1,PlayerID2,PlayerID3
 ```
 It's recommended to limit to a maximum of 10 additions at a time to avoid temporary bans from the API.
 
 - To remove a member, use:
 ```
-/allistremove playerID
+/removeid playerID
 ```
 
 - To view the current list of your alliance, use:
 ```
-/allist
+/listids
 ```
 
 - To manually update the alliance list, use:
 ```
-/updateallist
+/update
 ```
 
 - To access detailed information and profile picture of a player, use:
 ```
-/w playerID
+/details playerID
 ```
 
 **Note:** While the bot updates the alliance list, please do not manually refresh it if you are also accessing a player's detailed profile.
