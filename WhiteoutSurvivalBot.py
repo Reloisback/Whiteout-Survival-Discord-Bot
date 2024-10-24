@@ -88,6 +88,9 @@ async def add_user(ctx, ids: str):
 
         url = 'https://wos-giftcode-api.centurygame.com/api/player'
         headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        ssl_context = ssl.create_default_context()
+        ssl_context.check_hostname = False
+        ssl_context.verify_mode = ssl.CERT_NONE
 
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
