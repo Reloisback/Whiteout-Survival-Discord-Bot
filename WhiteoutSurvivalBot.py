@@ -8,7 +8,9 @@ from wcwidth import wcswidth
 import asyncio
 import ssl
 import os
-
+from datetime import datetime
+import requests
+from requests.adapters import HTTPAdapter, Retry
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -18,7 +20,16 @@ conn = sqlite3.connect('gift_db.sqlite')
 c = conn.cursor()
 c.execute('''CREATE TABLE IF NOT EXISTS users (fid INTEGER PRIMARY KEY, nickname TEXT, furnace_lv INTEGER DEFAULT 0)''')
 conn.commit()
-
+wos_player_info_url = "https://wos-giftcode-api.centurygame.com/api/player"
+wos_giftcode_url = "https://wos-giftcode-api.centurygame.com/api/gift_code"
+wos_giftcode_redemption_url = "https://wos-giftcode.centurygame.com"
+wos_encrypt_key = "tB87#kPtkxqOS2"
+retry_config = Retry(
+    total=5,
+    backoff_factor=1,
+    status_forcelist=[429], 
+    allowed_methods=["POST"]
+)
 def load_settings():
     default_settings = {
         'BOT_TOKEN': '',
@@ -173,6 +184,72 @@ async def remove_user(interaction:discord.Interaction, fid: int):
     conn.commit()
     await interaction.response.send_message(f"ID {fid} removed from the list.")
 
+def encode_data(data):
+    secret = wos_encrypt_key
+    sorted_keys = sorted(data.keys())
+    encoded_data = "&".join(
+        [
+            f"{key}={json.dumps(data[key]) if isinstance(data[key], dict) else data[key]}"
+            for key in sorted_keys
+        ]
+    )
+    sign = hashlib.md5(f"{encoded_data}{secret}".encode()).hexdigest()
+    return {"sign": sign, **data}
+
+def get_stove_info_wos(player_id):
+    session = requests.Session()
+    session.mount("https://", HTTPAdapter(max_retries=retry_config))
+
+    headers = {
+        "accept": "application/json, text/plain, */*",
+        "content-type": "application/x-www-form-urlencoded",
+        "origin": wos_giftcode_redemption_url,
+    }
+
+    data_to_encode = {
+        "fid": f"{player_id}",
+        "time": f"{int(datetime.now().timestamp())}",
+    }
+    data = encode_data(data_to_encode)
+
+    response_stove_info = session.post(
+        wos_player_info_url,
+        headers=headers,
+        data=data,
+    )
+    return session, response_stove_info
+
+def claim_giftcode_rewards_wos(player_id, giftcode):
+    session, response_stove_info = get_stove_info_wos(player_id=player_id)
+    if response_stove_info.json().get("msg") == "success":
+        data_to_encode = {
+            "fid": f"{player_id}",
+            "cdk": giftcode,
+            "time": f"{int(datetime.now().timestamp())}",
+        }
+        data = encode_data(data_to_encode)
+
+        response_giftcode = session.post(
+            wos_giftcode_url,
+            data=data,
+        )
+        
+        response_json = response_giftcode.json()
+        print(f"Response for {player_id}: {response_json}")
+        
+        if response_json.get("msg") == "SUCCESS":
+            return session, "SUCCESS"
+        elif response_json.get("msg") == "RECEIVED." and response_json.get("err_code") == 40008:
+            return session, "ALREADY_RECEIVED"
+        else:
+            return session, "ERROR"
+
+@bot.command(name='gift')
+async def use_giftcode(ctx, giftcode: str):
+    await ctx.message.delete()
+
+    notify_message = await ctx.send(
+        content="Alliance list is being checked for Gift Code usage, the process will be completed in approximately 4 minutes."
 @bot.tree.command(name="code", description="Starts process with manual giftcode")
 async def use_giftcode(interaction:discord.Interaction, giftcode: str):
     notify_message = await interaction.response.send_message(
@@ -182,44 +259,28 @@ async def use_giftcode(interaction:discord.Interaction, giftcode: str):
         content="https://tenor.com/view/typing-gif-3043127330471612038"
     )
 
-    ssl_context = ssl.create_default_context()
-    ssl_context.check_hostname = False
-    ssl_context.verify_mode = ssl.CERT_NONE
-    
     c.execute("SELECT * FROM users")
     users = c.fetchall()
     success_results = []
-    failure_results = []
+    received_results = []
+    error_results = []
 
-    for index, user in enumerate(users):
-        fid, nickname, furnace_lv = user
-        current_time = int(time.time() * 1000)
-        form = f"fid={fid}&cdk={giftcode}&time={current_time}"
-        sign = hashlib.md5((form + SECRET).encode('utf-8')).hexdigest()
-        form = f"sign={sign}&{form}"
-
-        url = 'https://wos-giftcode-api.centurygame.com/api/giftcode/redeem'
-        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
-        
-        while True:
-            async with aiohttp.ClientSession() as session:
-                async with session.post(url, headers=headers, data=form, ssl=ssl_context) as response:
-                    if response.status == 200:
-                        success_results.append(f"{fid} - {nickname} - USED")
-                        break 
-                    elif response.status == 429: 
-                        print(f"Rate limit reached for {fid}. Waiting 1 minute...")  # Log to console
-                        await asyncio.sleep(60) 
-                        continue
-                    else:
-                        failure_results.append(f"{fid} - {nickname} - USED BEFORE")
-                        break 
+    for user in users:
+        fid, nickname, _ = user
+        try:
+            _, response_status = claim_giftcode_rewards_wos(player_id=fid, giftcode=giftcode)
+            
+            if response_status == "SUCCESS":
+                success_results.append(f"{fid} - {nickname} - USED")
+            elif response_status == "ALREADY_RECEIVED":
+                received_results.append(f"{fid} - {nickname} - ALREADY RECEIVED")
+            else:
+                error_results.append(f"{fid} - {nickname} - ERROR")
+        except Exception as e:
+            print(f"Error processing user {fid}: {str(e)}")
+            error_results.append(f"{fid} - {nickname} - ERROR")
 
     await notify_message.delete()
-
-    def chunk_results(results, chunk_size=25):
-        for i in range(0, len(results), chunk_size):
-            yield results[i:i + chunk_size]
 
     for chunk in chunk_results(success_results):
         success_embed = discord.Embed(
@@ -233,17 +294,36 @@ async def use_giftcode(interaction:discord.Interaction, giftcode: str):
         
         await interaction.followup.send(embed=success_embed)
 
-    for chunk in chunk_results(failure_results):
-        failure_embed = discord.Embed(
-            title=f"{giftcode} Gift Code - Failed",
-            color=discord.Color.red()
+    for chunk in chunk_results(received_results):
+        received_embed = discord.Embed(
+            title=f"{giftcode} Gift Code - Already Received",
+            color=discord.Color.orange()
         )
-        failure_embed.set_footer(text="Developer: Reloisback | These users have already redeemed the gift code.")
+        received_embed.set_footer(text="Developer: Reloisback | These users have already received the gift code.")
         
         for result in chunk:
-            failure_embed.add_field(name=result, value="\u200b", inline=False)
+            received_embed.add_field(name=result, value="\u200b", inline=False)
         
-        await interaction.followup.send(embed=failure_embed)
+        await ctx.send(embed=received_embed)
+
+    for chunk in chunk_results(error_results):
+        error_embed = discord.Embed(
+            title=f"{giftcode} Gift Code - Error",
+            color=discord.Color.red()
+        )
+        error_embed.set_footer(text="Developer: Reloisback | An error occurred for these users during gift code redemption.")
+        
+        for result in chunk:
+            error_embed.add_field(name=result, value="\u200b", inline=False)
+        
+        await interaction.followup.send(embed=error_embed)
+
+def chunk_results(results, chunk_size=25):
+    for i in range(0, len(results), chunk_size):
+        yield results[i:i + chunk_size]
+
+def fix_rtl(text):
+    return f"\u202B{text}\u202C"
 
 @bot.tree.command(name="listids", description="Lists all players")
 async def show_users(interaction: discord.Interaction):
