@@ -303,7 +303,7 @@ async def use_giftcode(interaction:discord.Interaction, giftcode: str):
         
         for result in chunk:
             received_embed.add_field(name=result, value="\u200b", inline=False)
-        
+        sss
         await ctx.send(embed=received_embed)
 
     for chunk in chunk_results(error_results):
