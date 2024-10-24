@@ -66,6 +66,7 @@ BOT_TOKEN = settings['BOT_TOKEN']
 SECRET = settings['SECRET']
 CHANNEL_ID = int(settings['CHANNEL_ID'])
 ALLIANCE_NAME = settings['ALLIANCE_NAME']
+CUSTOMER_SERVICE = settings['CUSTOMER_SERVICE']
 
 @bot.command(name='allistadd')
 async def add_user(ctx, ids: str):
@@ -283,7 +284,7 @@ async def use_giftcode(ctx, giftcode: str):
             title=f"{giftcode} Gift Code - Success",
             color=discord.Color.green()
         )
-        success_embed.set_footer(text="Developer: Reloisback | These users have not redeemed the gift code before. Check your in-game mail")
+        success_embed.set_footer(text=f"Developer: {CUSTOMER_SERVICE} | These users have not redeemed the gift code before. Check your in-game mail")
         
         for result in chunk:
             success_embed.add_field(name=result, value="\u200b", inline=False)
@@ -307,7 +308,7 @@ async def use_giftcode(ctx, giftcode: str):
             title=f"{giftcode} Gift Code - Error",
             color=discord.Color.red()
         )
-        error_embed.set_footer(text="Developer: Reloisback | An error occurred for these users during gift code redemption.")
+        failure_embed.set_footer(text=f"Developer: {CUSTOMER_SERVICE} | These users have already redeemed the gift code.")
         
         for result in chunk:
             error_embed.add_field(name=result, value="\u200b", inline=False)
@@ -321,41 +322,68 @@ def chunk_results(results, chunk_size=25):
 def fix_rtl(text):
     return f"\u202B{text}\u202C"
 
-@bot.command(name='allist')
+def format_furnace_level(furnace_lv):
+    if furnace_lv > 30:
+        if 31 <= furnace_lv <= 34:
+            return f"30 Step {furnace_lv - 30}"
+        elif 35 <= furnace_lv <= 39:
+            return f"FC1 Step {furnace_lv - 35}"
+        elif 40 <= furnace_lv <= 44:
+            return f"FC2 Step {furnace_lv - 40}"
+        elif 45 <= furnace_lv <= 49:
+            return f"FC3 Step {furnace_lv - 45}"
+        elif 50 <= furnace_lv <= 54:
+            return f"FC4 Step {furnace_lv - 45}"
+        else:
+            return f"FC5 Step {furnace_lv - 50}"
+    else:
+        return str(furnace_lv)
+
+@bot.command(name='allist-old')
 async def show_users(ctx):
+    # Fetch data from the database
     c.execute("SELECT * FROM users ORDER BY furnace_lv DESC")
     users = c.fetchall()
     user_count = len(users)
 
+    # Embed title for clarity
     embed_title = f"{ALLIANCE_NAME} ALLIANCE LIST ({user_count} members)"
 
-    max_name_len = max(wcswidth(fix_rtl(user[1])) for user in users)
-    max_furnace_len = max(len(str(user[2])) for user in users) 
-    max_id_len = max(len(str(user[0])) for user in users) 
+    # Table header
+    header = "Name                | Furnace Level | Game ID\n"
+    header += "--------------------|---------------|---------\n"
 
-    header = "Name".ljust(max_name_len) + " | Furnace Level".ljust(max_furnace_len + 1) + " | Game ID\n"
-    header += "-" * (max_name_len + max_furnace_len + max_id_len + 6) + "\n"
-
+    # User info collection
     user_info = ""
-    part_number = 1 
+    part_number = 1  # Track current part for multi-part messages
 
     for user in users:
         fid, nickname, furnace_lv = user
+
+        # Check for RTL (right-to-left) characters if needed
         formatted_nickname = fix_rtl(nickname) if any("\u0600" <= c <= "\u06FF" for c in nickname) else nickname
-        line = formatted_nickname.ljust(max_name_len) + f" | {str(furnace_lv).ljust(max_furnace_len)} | {fid}\n"
-        
+
+        # Format the furnace level based on the custom rules
+        formatted_furnace_lv = format_furnace_level(furnace_lv)
+
+        # Format each user info line
+        line = f"{formatted_nickname.ljust(19)} | {formatted_furnace_lv.ljust(13)} | {fid}\n"
+
+        # Ensure each message is within Discord's 2000 character limit
         if len(user_info) + len(line) > 2000:
+            # Send the current embed when limit is reached
             embed = discord.Embed(
-                title=embed_title if part_number == 1 else f"{ALLIANCE_NAME} ALLIANCE LIST (Part {part_number})",
+                title=f"{embed_title} (Part {part_number})",
                 description=f"```{header}{user_info}```",
                 color=discord.Color.green()
             )
             await ctx.send(embed=embed)
-            user_info = ""  
-            part_number += 1 
+            user_info = ""  # Reset for the next part
+            part_number += 1
 
-        user_info += line
+        user_info += line  # Add the line to the current user info
 
+    # Send the last part if there's any data left
     if user_info:
         embed = discord.Embed(
             title=embed_title if part_number == 1 else f"{ALLIANCE_NAME} ALLIANCE LIST (Part {part_number})",
@@ -364,7 +392,38 @@ async def show_users(ctx):
         )
         await ctx.send(embed=embed)
 
+@bot.command(name='allist')
+async def show_users(ctx):
+    # Fetch data from the database
+    c.execute("SELECT * FROM users ORDER BY furnace_lv DESC")
+    users = c.fetchall()
+    user_count = len(users)
 
+    # Embed with a general color theme
+    embed = discord.Embed(
+        title=f"{ALLIANCE_NAME} ALLIANCE LIST ({user_count} members)",
+        color=discord.Color.green()  # Set a custom color for the embed
+    )
+
+    # Go through each user and add their details as fields in the embed
+    for user in users:
+        fid, nickname, furnace_lv = user
+
+        # Check for RTL (right-to-left) characters if needed
+        formatted_nickname = fix_rtl(nickname) if any("\u0600" <= c <= "\u06FF" for c in nickname) else nickname
+
+        # Format the furnace level based on the custom rules
+        formatted_furnace_lv = format_furnace_level(furnace_lv)
+
+        # Add user details to the embed as a field with enhanced formatting
+        embed.add_field(
+            name=f"🔹 {formatted_nickname}",  # You can add emojis to highlight labels
+            value=f"**🛠️ Furnace Level**: {formatted_furnace_lv}\n**🆔 Game ID**: `{fid}`",  # Emojis and formatting
+            inline=False  # To display fields one after another vertically
+        )
+
+    # Send the embed
+    await ctx.send(embed=embed)
 
 @tasks.loop(seconds=60)
 async def change_bot_status():
@@ -486,7 +545,7 @@ async def check_agslist(channel):
                 description="\n".join(furnace_changes),
                 color=discord.Color.orange()
             )
-            furnace_embed.set_footer(text="Reloisback")
+            furnace_embed.set_footer(text=f"{CUSTOMER_SERVICE}")
             await channel.send(embed=furnace_embed)
 
         if nickname_changes:
@@ -495,7 +554,7 @@ async def check_agslist(channel):
                 description="\n".join(nickname_changes),
                 color=discord.Color.blue()
             )
-            furnace_embed.set_footer(text="Reloisback")
+            furnace_embed.set_footer(text=f"{CUSTOMER_SERVICE}")
             await channel.send(embed=nickname_embed)
     else:
         print("No change.")
