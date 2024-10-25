@@ -244,7 +244,7 @@ def claim_giftcode_rewards_wos(player_id, giftcode):
         else:
             return session, "ERROR"
 
-@bot.tree.command(name="code", description="Starts process with manual giftcode")
+@bot.tree.command(name="code", description="Starts process with manual giftcode. Usage /code <giftcode>")
 async def use_giftcode(interaction:discord.Interaction, giftcode: str):
     notify_message = await interaction.response.send_message(
         "Alliance list is being checked for Gift Code usage, the process will be completed in approximately 4 minutes."
@@ -319,7 +319,7 @@ def chunk_results(results, chunk_size=25):
 def fix_rtl(text):
     return f"\u202B{text}\u202C"
 
-@bot.tree.command(name="listids", description="Lists all players")
+@bot.tree.command(name="listids", description="Lists all players. Usage: /listids")
 async def show_users(interaction: discord.Interaction):
     c.execute("SELECT * FROM users ORDER BY furnace_lv DESC")
     users = c.fetchall()
@@ -371,7 +371,7 @@ async def change_bot_status():
         await bot.change_presence(activity=discord.Game(name=status_list[current_status_index]))
         current_status_index = (current_status_index + 1) % len(status_list)
 
-@bot.tree.command(name="botstatus", description="Set the status of the bot")
+@bot.tree.command(name="botstatus", description="Set the status of the bot. Usage: /botstatus")
 async def set_bot_status(interaction:discord.Interaction):
     global status_list, current_status_index
     status_list = []
@@ -432,7 +432,7 @@ async def on_ready():
     auto_update_agslist.start()  
     countdown_timer.start() 
 
-@bot.tree.command(name="update", description="Updates alliance list")
+@bot.tree.command(name="update", description="Updates alliance list. Usage /update")
 async def update_agslist(interaction:discord.Interaction):  
     await check_agslist(channel=interaction.channel) 
     await interaction.response.send_message("This could take a second. Take a seat")
@@ -513,7 +513,7 @@ async def check_agslist(channel):
 
     print("Control over!") 
 
-@bot.tree.command(name='details', description="Detailed information and profile picture of a player")
+@bot.tree.command(name='details', description="Detailed information and profile picture of a player. Usage: /details <playerid>")
 async def user_info(interaction: discord.Interaction, fid: int):
     interaction.response.defer()
     current_time = int(time.time() * 1000)
