@@ -130,10 +130,27 @@ async def add_user_and_assign_gift_codes(ctx, ids: str):
                                 })
                                 print(f"Added: {fid} - {nickname}")
 
-                                # Associate unused gift codes with the new user
+                                # Create an embed for user addition
+                                add_embed = discord.Embed(
+                                    title="User Added",
+                                    description=f"User {nickname} (ID: {fid}) was successfully added.",
+                                    color=discord.Color.green()
+                                )
+                                await ctx.send(embed=add_embed)
+
+                                # Associate unused gift codes with the new user and send embed
                                 for gift_code_id, code in gift_codes:
                                     if not has_user_used_gift_code(fid, gift_code_id):
                                         mark_gift_code_as_used(fid, gift_code_id)
+
+                                        # Create an embed for gift code application
+                                        code_embed = discord.Embed(
+                                            title="Gift Code Applied",
+                                            description=f"Gift code `{code}` has been applied to {nickname} (ID: {fid}).",
+                                            color=discord.Color.blue()
+                                        )
+                                        await ctx.send(embed=code_embed)
+                                        break  # Only apply one gift code per user
                             else:
                                 already_exists.append(f"{fid} - Already exists")
                         else:
@@ -149,7 +166,7 @@ async def add_user_and_assign_gift_codes(ctx, ids: str):
                         already_exists.append(f"{fid} - Request failed with status: {response.status}")
                         break  
 
-    # Create Discord embed for added users
+    # Create Discord embed for added users summary
     if added:
         embed = discord.Embed(
             title="Added People",
@@ -176,12 +193,17 @@ async def add_user_and_assign_gift_codes(ctx, ids: str):
         await ctx.send(embed=embed)
 
 
-
 @bot.command(name='allistremove')
 async def remove_user(ctx, fid: int):
+    # Remove the user from the `user_gift_codes` table
+    c.execute("DELETE FROM user_gift_codes WHERE user_id=?", (fid,))
+    
+    # Remove the user from the `users` table
     c.execute("DELETE FROM users WHERE fid=?", (fid,))
+    
     conn.commit()
-    await ctx.send(f"ID {fid} removed from the list.")
+    await ctx.send(f"ID {fid} and all associated data removed from the list.")
+
 
 def encode_data(data):
     secret = wos_encrypt_key
@@ -252,9 +274,16 @@ def has_user_used_gift_code(user_id, gift_code_id):
     return c.fetchone() is not None
 
 def mark_gift_code_as_used(user_id, gift_code_id):
-    c.execute("INSERT INTO user_gift_codes (user_id, gift_code_id, used_at) VALUES (?, ?, CURRENT_TIMESTAMP)")
-    # Update the gift code status to 'used' after redemption
+    # Insert a record into `user_gift_codes` for tracking gift code usage by the user
+    c.execute(
+        "INSERT INTO user_gift_codes (user_id, gift_code_id, used_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        (user_id, gift_code_id)
+    )
+    
+    # Optionally, update the gift code status to 'used' if this is a single-use code
     c.execute("UPDATE gift_codes SET status = 'used' WHERE id = ?", (gift_code_id,))
+    
+    # Commit changes to save to the database
     conn.commit()
     print(f"Marked gift code {gift_code_id} as used for user {user_id}")  # Debugging statement
 
@@ -266,7 +295,7 @@ async def use_giftcode(ctx, giftcode: str):
     notify_message = await ctx.send(
         content="Checking alliance list for Gift Code usage, the process may take several minutes."
     )
-    notify_message = await ctx.send(content="https://tenor.com/view/typing-gif-3043127330471612038")
+    await ctx.send(content="https://tenor.com/view/typing-gif-3043127330471612038")
 
     # Add the gift code to the database if it doesn't exist
     add_gift_code(giftcode)
@@ -290,7 +319,7 @@ async def use_giftcode(ctx, giftcode: str):
 
         # Skip if the user has already used this gift code
         if has_user_used_gift_code(fid, gift_code_id):
-            failure_results.append(f"{fid} - {nickname} - USED BEFORE")
+            failure_results.append(f"{fid} - {nickname} - USED BEFORE - via DB")
             print(f"Skipping {nickname}, already used gift code {giftcode}.")
             continue
 
@@ -315,39 +344,42 @@ async def use_giftcode(ctx, giftcode: str):
                         await asyncio.sleep(60) 
                         continue
                     else:
-                        failure_results.append(f"{fid} - {nickname} - USED BEFORE")
+                        failure_results.append(f"{fid} - {nickname} - USED BEFORE via httpRequest")
                         break 
 
     await notify_message.delete()
 
-    # Output the results (same as before)
+    # Output the results
     def chunk_results(results, chunk_size=25):
         for i in range(0, len(results), chunk_size):
             yield results[i:i + chunk_size]
 
+    # Success Embed
     for chunk in chunk_results(success_results):
         success_embed = discord.Embed(
             title=f"{giftcode} Gift Code - Success",
             color=discord.Color.green()
         )
-        success_embed.set_footer(text="Developer: Reloisback | These users have not redeemed the gift code before. Check your in-game mail")
+        success_embed.set_footer(text="Developer: Reloisback | These users have not redeemed the gift code before. Check your in-game mail.")
         
         for result in chunk:
             success_embed.add_field(name=result, value="\u200b", inline=False)
         
         await ctx.send(embed=success_embed)
 
+    # Failure Embed
     for chunk in chunk_results(failure_results):
         failure_embed = discord.Embed(
             title=f"{giftcode} Gift Code - Failed",
             color=discord.Color.red()
         )
-        error_embed.set_footer(text="Developer: Reloisback | An error occurred for these users during gift code redemption.")
+        failure_embed.set_footer(text="Developer: Reloisback | An error occurred for these users during gift code redemption.")
         
         for result in chunk:
             failure_embed.add_field(name=result, value="\u200b", inline=False)
         
         await ctx.send(embed=failure_embed)
+
 
 def chunk_results(results, chunk_size=25):
     for i in range(0, len(results), chunk_size):
