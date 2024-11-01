@@ -67,8 +67,8 @@ SECRET = settings['SECRET']
 CHANNEL_ID = int(settings['CHANNEL_ID'])
 ALLIANCE_NAME = settings['ALLIANCE_NAME']
 
-@bot.command(name='allistadd')
-async def add_user(ctx, ids: str):
+@bot.tree.command(name="addid", description= "Add new PlayerIDs. Usage: /allistadd <player_id, player_id>")
+async def add_user(interaction:discord.Interaction, ids: str):
     added = []
     already_exists = []
     
@@ -152,7 +152,7 @@ async def add_user(ctx, ids: str):
                 inline=False
             )
 
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
     if already_exists:
         embed = discord.Embed(
@@ -160,7 +160,7 @@ async def add_user(ctx, ids: str):
             description="\n".join(already_exists),
             color=discord.Color.red()
         )
-        await ctx.send(embed=embed)
+        await interaction.response.send_message(embed=embed)
 
     msg_parts = []
     if added:
@@ -170,19 +170,19 @@ async def add_user(ctx, ids: str):
     
     for part in msg_parts:
         while len(part) > 2000:
-            await ctx.send(part[:2000]) 
+            await interaction.followup.send(part[:2000]) 
             part = part[2000:]  
         if part: 
-            await ctx.send(part)
+            await interaction.followup.send(part)
 
 
 
 
-@bot.command(name='allistremove')
-async def remove_user(ctx, fid: int):
+@bot.tree.command(name="removeid", description="Removes player IDs. Usage: /allistremove <player_id>")
+async def remove_user(interaction:discord.Interaction, fid: int):
     c.execute("DELETE FROM users WHERE fid=?", (fid,))
     conn.commit()
-    await ctx.send(f"ID {fid} removed from the list.")
+    await interaction.response.send_message(f"ID {fid} removed from the list.")
 
 def encode_data(data):
     secret = wos_encrypt_key
@@ -244,14 +244,12 @@ def claim_giftcode_rewards_wos(player_id, giftcode):
         else:
             return session, "ERROR"
 
-@bot.command(name='gift')
-async def use_giftcode(ctx, giftcode: str):
-    await ctx.message.delete()
-
-    notify_message = await ctx.send(
-        content="Alliance list is being checked for Gift Code usage, the process will be completed in approximately 4 minutes."
+@bot.tree.command(name="code", description="Starts process with manual giftcode. Usage /code <giftcode>")
+async def use_giftcode(interaction:discord.Interaction, giftcode: str):
+    notify_message = await interaction.response.send_message(
+        "Alliance list is being checked for Gift Code usage, the process will be completed in approximately 4 minutes."
     )
-    notify_message = await ctx.send(
+    notify_message = await interaction.followup.send(
         content="https://tenor.com/view/typing-gif-3043127330471612038"
     )
 
@@ -288,7 +286,7 @@ async def use_giftcode(ctx, giftcode: str):
         for result in chunk:
             success_embed.add_field(name=result, value="\u200b", inline=False)
         
-        await ctx.send(embed=success_embed)
+        await interaction.followup.send(embed=success_embed)
 
     for chunk in chunk_results(received_results):
         received_embed = discord.Embed(
@@ -300,7 +298,7 @@ async def use_giftcode(ctx, giftcode: str):
         for result in chunk:
             received_embed.add_field(name=result, value="\u200b", inline=False)
         
-        await ctx.send(embed=received_embed)
+        await interaction.followup.send(embed=received_embed)
 
     for chunk in chunk_results(error_results):
         error_embed = discord.Embed(
@@ -312,7 +310,7 @@ async def use_giftcode(ctx, giftcode: str):
         for result in chunk:
             error_embed.add_field(name=result, value="\u200b", inline=False)
         
-        await ctx.send(embed=error_embed)
+        await interaction.followup.send(embed=error_embed)
 
 def chunk_results(results, chunk_size=25):
     for i in range(0, len(results), chunk_size):
@@ -321,8 +319,8 @@ def chunk_results(results, chunk_size=25):
 def fix_rtl(text):
     return f"\u202B{text}\u202C"
 
-@bot.command(name='allist')
-async def show_users(ctx):
+@bot.tree.command(name="listids", description="Lists all players. Usage: /listids")
+async def show_users(interaction: discord.Interaction):
     c.execute("SELECT * FROM users ORDER BY furnace_lv DESC")
     users = c.fetchall()
     user_count = len(users)
@@ -350,7 +348,7 @@ async def show_users(ctx):
                 description=f"```{header}{user_info}```",
                 color=discord.Color.green()
             )
-            await ctx.send(embed=embed)
+            await interaction.followup.send(embed=embed)
             user_info = ""  
             part_number += 1 
 
@@ -362,7 +360,7 @@ async def show_users(ctx):
             description=f"```{header}{user_info}```",
             color=discord.Color.green()
         )
-        await ctx.send(embed=embed)
+        await interaction.followup.send(embed=embed)
 
 
 
@@ -373,38 +371,49 @@ async def change_bot_status():
         await bot.change_presence(activity=discord.Game(name=status_list[current_status_index]))
         current_status_index = (current_status_index + 1) % len(status_list)
 
-@bot.command(name='botstatus')
-async def set_bot_status(ctx):
+@bot.tree.command(name="botstatus", description="Set the status of the bot. Usage: /botstatus")
+async def set_bot_status(interaction:discord.Interaction):
     global status_list, current_status_index
     status_list = []
     current_status_index = 0
 
-    await ctx.send("How many situations do you want to enter?")
-
+    await interaction.response.send_message("How many situations do you want to enter? (max. 3)")
+    def check(msg):
+        return msg.author == msg.author and msg.channel == msg.channel
+    
+    
     try:
-        def check(msg):
-            return msg.author == ctx.author and msg.channel == ctx.channel
+        while True:
 
-        msg = await bot.wait_for('message', check=check)
-        num_statuses = int(msg.content)
-
-        for i in range(num_statuses):
-            await ctx.send(f"{i + 1}. write down the situation:")
             msg = await bot.wait_for('message', check=check)
-            status_list.append(msg.content)
+            num_statuses = int(msg.content)
 
-        await ctx.send("If you want the states to change every how many seconds, write that down:")
-        msg = await bot.wait_for('message', check=check)
-        change_interval = int(msg.content)
+            #followups cant be more than 5, so we need to set a limit here
+            #could be fixed with a UI
 
-        change_bot_status.change_interval(seconds=change_interval)
-        change_bot_status.start()
-        await ctx.send(f"Bot status is set! It will switch every {change_interval} seconds.")
+            if num_statuses > 3:
+                await interaction.followup.send("Sorry, cant be more than 3 at the moment") #
+                break
+
+            for i in range(num_statuses):
+                await interaction.followup.send(f"{i + 1}. write down the situation:")
+                msg = await bot.wait_for('message', check=check)
+                status_list.append(msg.content)
+                break
+
+            await interaction.followup.send("If you want the states to change every how many seconds, write that down:")
+            msg = await bot.wait_for('message', check=check)
+            change_interval = int(msg.content)
+
+            change_bot_status.change_interval(seconds=change_interval)
+            change_bot_status.start()
+            await interaction.followup.send(f"Bot status is set! It will switch every {change_interval} seconds.")
+            break
 
     except ValueError:
-        await ctx.send("Please enter a valid number.")
+        await interaction.followup.send("Please enter a valid number.")
     except Exception as e:
-        await ctx.send(f"Error occurred: {str(e)}")
+        await interaction.followup.send(f"Error occurred: {str(e)}")
 
 status_list = []
 current_status_index = 0
@@ -416,16 +425,17 @@ async def auto_update_agslist():
 
 @bot.event
 async def on_ready():
+    await bot.tree.sync()
     print(f'Bot is online as {bot.user}')
     channel = bot.get_channel(CHANNEL_ID)
     await check_agslist(channel)  
     auto_update_agslist.start()  
     countdown_timer.start() 
 
-@bot.command(name='updateallist')
-async def update_agslist(ctx):
-    await ctx.message.delete()  
-    await check_agslist(ctx.channel) 
+@bot.tree.command(name="update", description="Updates alliance list. Usage /update")
+async def update_agslist(interaction:discord.Interaction):  
+    await check_agslist(channel=interaction.channel) 
+    await interaction.response.send_message("This could take a second. Take a seat")
 
 @tasks.loop(minutes=1)
 async def countdown_timer():
@@ -498,12 +508,14 @@ async def check_agslist(channel):
             furnace_embed.set_footer(text="Reloisback")
             await channel.send(embed=nickname_embed)
     else:
+        await channel.send("No changes detected")
         print("No change.")
 
     print("Control over!") 
 
-@bot.command(name='w')
-async def user_info(ctx, fid: int):
+@bot.tree.command(name='details', description="Detailed information and profile picture of a player. Usage: /details <playerid>")
+async def user_info(interaction: discord.Interaction, fid: int):
+    interaction.response.defer()
     current_time = int(time.time() * 1000)
     form = f"fid={fid}&time={current_time}"
     sign = hashlib.md5((form + SECRET).encode('utf-8')).hexdigest()
@@ -524,9 +536,9 @@ async def user_info(ctx, fid: int):
                 embed.add_field(name='Furnace Level', value=data['data']['stove_lv'], inline=True)
                 embed.add_field(name='State', value=f"{data['data']['kid']}", inline=True)
                 embed.set_image(url=data['data']['avatar_image'])
-                await ctx.send(embed=embed)
+                await interaction.followup.send(embed=embed)
             else:
-                await ctx.send(f"User with ID {fid} not found or an error occurred.")
+                await interaction.followup.send(f"User with ID {fid} not found or an error occurred.")
 bot.run(BOT_TOKEN)
 
 # -------------------------------------------
