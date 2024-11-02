@@ -68,11 +68,15 @@ CHANNEL_ID = int(settings['CHANNEL_ID'])
 ALLIANCE_NAME = settings['ALLIANCE_NAME']
 
 @bot.command(name='allistadd')
-async def add_user(ctx, ids: str):
+async def add_user_and_assign_gift_codes(ctx, ids: str):
     added = []
     already_exists = []
     
     id_list = ids.split(',')
+
+    # Fetch all unused gift codes from the database
+    c.execute("SELECT id, code FROM gift_codes WHERE status = 'unused'")
+    gift_codes = c.fetchall()  # List of tuples (gift_code_id, code)
 
     total_ids = len(id_list) 
     for index, fid in enumerate(id_list):
@@ -87,7 +91,7 @@ async def add_user(ctx, ids: str):
         form = f"sign={sign}&{form}"
 
         url = 'https://wos-giftcode-api.centurygame.com/api/player'
-        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        headers = {'Content-Type': 'application/x-www-form-urlencoded' }
 
         ssl_context = ssl.create_default_context()
         ssl_context.check_hostname = False
@@ -103,6 +107,7 @@ async def add_user(ctx, ids: str):
                             already_exists.append(f"{fid} - No data found")
                             break 
 
+                        # Handle case where `data['data']` is a list or dict
                         if isinstance(data['data'], list) and data['data']:
                             nickname = data['data'][0]['nickname']
                             furnace_lv = data['data'][0].get('stove_lv', 0)
@@ -115,6 +120,7 @@ async def add_user(ctx, ids: str):
                             result = c.fetchone()
 
                             if result is None:
+                                # Insert the user if not found
                                 c.execute("INSERT INTO users (fid, nickname, furnace_lv) VALUES (?, ?, ?)", (fid, nickname, furnace_lv))
                                 conn.commit()
                                 added.append({
@@ -122,12 +128,34 @@ async def add_user(ctx, ids: str):
                                     'nickname': nickname,
                                     'furnace_lv': furnace_lv
                                 })
-                                print(f"Added: {fid} - {nickname}") 
+                                print(f"Added: {fid} - {nickname}")
+
+                                # Create an embed for user addition
+                                add_embed = discord.Embed(
+                                    title="User Added",
+                                    description=f"User {nickname} (ID: {fid}) was successfully added.",
+                                    color=discord.Color.green()
+                                )
+                                await ctx.send(embed=add_embed)
+
+                                # Associate unused gift codes with the new user and send embed
+                                for gift_code_id, code in gift_codes:
+                                    if not has_user_used_gift_code(fid, gift_code_id):
+                                        mark_gift_code_as_used(fid, gift_code_id)
+
+                                        # Create an embed for gift code application
+                                        code_embed = discord.Embed(
+                                            title="Gift Code Applied",
+                                            description=f"Gift code `{code}` has been applied to {nickname} (ID: {fid}).",
+                                            color=discord.Color.blue()
+                                        )
+                                        await ctx.send(embed=code_embed)
+                                        break  # Only apply one gift code per user
                             else:
                                 already_exists.append(f"{fid} - Already exists")
                         else:
                             already_exists.append(f"{fid} - Nickname not found")
-                        break 
+                        break
 
                     elif response.status == 429:
                         print(f"Rate limit reached for {fid}. Waiting 1 minute...") 
@@ -138,6 +166,7 @@ async def add_user(ctx, ids: str):
                         already_exists.append(f"{fid} - Request failed with status: {response.status}")
                         break  
 
+    # Create Discord embed for added users summary
     if added:
         embed = discord.Embed(
             title="Added People",
@@ -154,6 +183,7 @@ async def add_user(ctx, ids: str):
 
         await ctx.send(embed=embed)
 
+    # Create Discord embed for users that already exist or had issues
     if already_exists:
         embed = discord.Embed(
             title="Already Exists / No Data Found",
@@ -162,27 +192,18 @@ async def add_user(ctx, ids: str):
         )
         await ctx.send(embed=embed)
 
-    msg_parts = []
-    if added:
-        msg_parts.append(f"Successfully added: {', '.join(added)}")
-    if already_exists:
-        msg_parts.append(f"Already exists or no data found: {', '.join(already_exists)}")
-    
-    for part in msg_parts:
-        while len(part) > 2000:
-            await ctx.send(part[:2000]) 
-            part = part[2000:]  
-        if part: 
-            await ctx.send(part)
-
-
-
 
 @bot.command(name='allistremove')
 async def remove_user(ctx, fid: int):
+    # Remove the user from the `user_gift_codes` table
+    c.execute("DELETE FROM user_gift_codes WHERE user_id=?", (fid,))
+    
+    # Remove the user from the `users` table
     c.execute("DELETE FROM users WHERE fid=?", (fid,))
+    
     conn.commit()
-    await ctx.send(f"ID {fid} removed from the list.")
+    await ctx.send(f"ID {fid} and all associated data removed from the list.")
+
 
 def encode_data(data):
     secret = wos_encrypt_key
@@ -244,75 +265,121 @@ def claim_giftcode_rewards_wos(player_id, giftcode):
         else:
             return session, "ERROR"
 
+def add_gift_code(code, description=""):
+    c.execute("INSERT OR IGNORE INTO gift_codes (code, description) VALUES (?, ?)", (code, description))
+    conn.commit()
+
+def has_user_used_gift_code(user_id, gift_code_id):
+    c.execute("SELECT 1 FROM user_gift_codes WHERE user_id = ? AND gift_code_id = ?", (user_id, gift_code_id))
+    return c.fetchone() is not None
+
+def mark_gift_code_as_used(user_id, gift_code_id):
+    # Insert a record into `user_gift_codes` for tracking gift code usage by the user
+    c.execute(
+        "INSERT INTO user_gift_codes (user_id, gift_code_id, used_at) VALUES (?, ?, CURRENT_TIMESTAMP)",
+        (user_id, gift_code_id)
+    )
+    
+    # Optionally, update the gift code status to 'used' if this is a single-use code
+    c.execute("UPDATE gift_codes SET status = 'used' WHERE id = ?", (gift_code_id,))
+    
+    # Commit changes to save to the database
+    conn.commit()
+    print(f"Marked gift code {gift_code_id} as used for user {user_id}")  # Debugging statement
+
+
 @bot.command(name='gift')
 async def use_giftcode(ctx, giftcode: str):
     await ctx.message.delete()
 
     notify_message = await ctx.send(
-        content="Alliance list is being checked for Gift Code usage, the process will be completed in approximately 4 minutes."
+        content="Checking alliance list for Gift Code usage, the process may take several minutes."
     )
-    notify_message = await ctx.send(
-        content="https://tenor.com/view/typing-gif-3043127330471612038"
-    )
+    await ctx.send(content="https://tenor.com/view/typing-gif-3043127330471612038")
+
+    # Add the gift code to the database if it doesn't exist
+    add_gift_code(giftcode)
+    
+    # Get the gift code ID
+    c.execute("SELECT id FROM gift_codes WHERE code = ?", (giftcode,))
+    gift_code_id = c.fetchone()[0]
+
+    # SSL setup
+    ssl_context = ssl.create_default_context()
+    ssl_context.check_hostname = False
+    ssl_context.verify_mode = ssl.CERT_NONE
 
     c.execute("SELECT * FROM users")
     users = c.fetchall()
     success_results = []
-    received_results = []
-    error_results = []
+    failure_results = []
 
-    for user in users:
-        fid, nickname, _ = user
-        try:
-            _, response_status = claim_giftcode_rewards_wos(player_id=fid, giftcode=giftcode)
-            
-            if response_status == "SUCCESS":
-                success_results.append(f"{fid} - {nickname} - USED")
-            elif response_status == "ALREADY_RECEIVED":
-                received_results.append(f"{fid} - {nickname} - ALREADY RECEIVED")
-            else:
-                error_results.append(f"{fid} - {nickname} - ERROR")
-        except Exception as e:
-            print(f"Error processing user {fid}: {str(e)}")
-            error_results.append(f"{fid} - {nickname} - ERROR")
+    for index, user in enumerate(users):
+        fid, nickname, furnace_lv = user
+
+        # Skip if the user has already used this gift code
+        if has_user_used_gift_code(fid, gift_code_id):
+            failure_results.append(f"{fid} - {nickname} - USED BEFORE - via DB")
+            print(f"Skipping {nickname}, already used gift code {giftcode}.")
+            continue
+
+        current_time = int(time.time() * 1000)
+        form = f"fid={fid}&cdk={giftcode}&time={current_time}"
+        sign = hashlib.md5((form + SECRET).encode('utf-8')).hexdigest()
+        form = f"sign={sign}&{form}"
+
+        url = 'https://wos-giftcode-api.centurygame.com/api/giftcode/redeem'
+        headers = {'Content-Type': 'application/x-www-form-urlencoded'}
+        
+        while True:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, headers=headers, data=form, ssl=ssl_context) as response:
+                    if response.status == 200:
+                        success_results.append(f"{fid} - {nickname} - USED")
+                        # Mark the code as used for this user
+                        mark_gift_code_as_used(fid, gift_code_id)
+                        break 
+                    elif response.status == 429: 
+                        print(f"Rate limit reached for {fid}. Waiting 1 minute...")  # Log to console
+                        await asyncio.sleep(60) 
+                        continue
+                    else:
+                        failure_results.append(f"{fid} - {nickname} - USED BEFORE via httpRequest")
+                        break 
 
     await notify_message.delete()
 
+    # Output the results
+    def chunk_results(results, chunk_size=25):
+        for i in range(0, len(results), chunk_size):
+            yield results[i:i + chunk_size]
+
+    # Success Embed
     for chunk in chunk_results(success_results):
         success_embed = discord.Embed(
             title=f"{giftcode} Gift Code - Success",
             color=discord.Color.green()
         )
-        success_embed.set_footer(text="Developer: Reloisback | These users have not redeemed the gift code before. Check your in-game mail")
+        success_embed.set_footer(text="Developer: Reloisback | These users have not redeemed the gift code before. Check your in-game mail.")
         
         for result in chunk:
             success_embed.add_field(name=result, value="\u200b", inline=False)
         
         await ctx.send(embed=success_embed)
 
-    for chunk in chunk_results(received_results):
-        received_embed = discord.Embed(
-            title=f"{giftcode} Gift Code - Already Received",
-            color=discord.Color.orange()
-        )
-        received_embed.set_footer(text="Developer: Reloisback | These users have already received the gift code.")
-        
-        for result in chunk:
-            received_embed.add_field(name=result, value="\u200b", inline=False)
-        
-        await ctx.send(embed=received_embed)
-
-    for chunk in chunk_results(error_results):
-        error_embed = discord.Embed(
-            title=f"{giftcode} Gift Code - Error",
+    # Failure Embed
+    for chunk in chunk_results(failure_results):
+        failure_embed = discord.Embed(
+            title=f"{giftcode} Gift Code - Failed",
             color=discord.Color.red()
         )
-        error_embed.set_footer(text="Developer: Reloisback | An error occurred for these users during gift code redemption.")
+        failure_embed.set_footer(text="Developer: Reloisback | An error occurred for these users during gift code redemption.")
         
         for result in chunk:
-            error_embed.add_field(name=result, value="\u200b", inline=False)
+            failure_embed.add_field(name=result, value="\u200b", inline=False)
         
-        await ctx.send(embed=error_embed)
+        await ctx.send(embed=failure_embed)
+
 
 def chunk_results(results, chunk_size=25):
     for i in range(0, len(results), chunk_size):
