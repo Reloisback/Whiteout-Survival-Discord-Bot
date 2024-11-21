@@ -68,28 +68,33 @@ class GiftCommand(commands.Cog):
             data_to_encode = {
                 "fid": f"{player_id}",
                 "cdk": giftcode,
-                "time": f"{int(datetime.now().timestamp())}",
+                "time": f"{int(datetime.now().timestamp() * 1000)}",  # Ensure timestamp is in milliseconds
             }
             data = self.encode_data(data_to_encode)
 
-            response_giftcode = session.post(
-                wos_giftcode_url,
-                data=data,
-            )
-            
-            response_json = response_giftcode.json()
-            print(f"Response for {player_id}: {response_json}")
-            
-            if response_json.get("msg") == "SUCCESS":
-                return session, "SUCCESS"
-            elif response_json.get("msg") == "RECEIVED." and response_json.get("err_code") == 40008:
-                return session, "ALREADY_RECEIVED"
-            elif response_json.get("msg") == "CDK NOT FOUND." and response_json.get("err_code") == 40014:
-                return session, "CDK_NOT_FOUND"
-            elif response_json.get("msg") == "SAME TYPE EXCHANGE." and response_json.get("err_code") == 40011:
-                return session, "ALREADY_RECEIVED"
-            else:
-                return session, "ERROR"
+            while True:
+                response_giftcode = session.post(
+                    wos_giftcode_url,
+                    data=data,
+                )
+                
+                response_json = response_giftcode.json()
+                print(f"Response for {player_id}: {response_json}")
+                
+                if response_json.get("msg") == "SUCCESS":
+                    return session, "SUCCESS"
+                elif response_json.get("msg") == "RECEIVED." and response_json.get("err_code") == 40008:
+                    return session, "ALREADY_RECEIVED"
+                elif response_json.get("msg") == "CDK NOT FOUND." and response_json.get("err_code") == 40014:
+                    return session, "CDK_NOT_FOUND"
+                elif response_json.get("msg") == "SAME TYPE EXCHANGE." and response_json.get("err_code") == 40011:
+                    return session, "ALREADY_RECEIVED"
+                elif response_json.get("msg") == "TIME ERROR." and response_json.get("err_code") == 40007:
+                    print(f"[INFO] API limit reached for {player_id}. Waiting 60 seconds before retrying.")
+                    time.sleep(60)
+                    continue  # Retry after waiting
+                else:
+                    return session, "ERROR"
 
     async def giftcode_autocomplete(
         self, interaction: discord.Interaction, current: str
