@@ -72,29 +72,38 @@ class GiftCommand(commands.Cog):
             }
             data = self.encode_data(data_to_encode)
 
-            while True:
-                response_giftcode = session.post(
-                    wos_giftcode_url,
-                    data=data,
-                )
-                
-                response_json = response_giftcode.json()
-                print(f"Response for {player_id}: {response_json}")
-                
-                if response_json.get("msg") == "SUCCESS":
-                    return session, "SUCCESS"
-                elif response_json.get("msg") == "RECEIVED." and response_json.get("err_code") == 40008:
-                    return session, "ALREADY_RECEIVED"
-                elif response_json.get("msg") == "CDK NOT FOUND." and response_json.get("err_code") == 40014:
-                    return session, "CDK_NOT_FOUND"
-                elif response_json.get("msg") == "SAME TYPE EXCHANGE." and response_json.get("err_code") == 40011:
-                    return session, "ALREADY_RECEIVED"
-                elif response_json.get("msg") == "TIME ERROR." and response_json.get("err_code") == 40007:
-                    print(f"[INFO] API limit reached for {player_id}. Waiting 60 seconds before retrying.")
-                    time.sleep(60)
-                    continue  # Retry after waiting
-                else:
-                    return session, "ERROR"
+            response_giftcode = session.post(
+                wos_giftcode_url,
+                data=data,
+            )
+            
+            response_json = response_giftcode.json()
+            print(f"Response for {player_id}: {response_json}")
+            
+            # Handle successful redemption
+            if response_json.get("msg") == "SUCCESS":
+                return session, "SUCCESS"
+
+            # Handle already redeemed code
+            elif response_json.get("msg") == "RECEIVED." and response_json.get("err_code") == 40008:
+                return session, "ALREADY_RECEIVED"
+
+            # Handle gift code not found
+            elif response_json.get("msg") == "CDK NOT FOUND." and response_json.get("err_code") == 40014:
+                return session, "CDK_NOT_FOUND"
+
+            # Handle same type exchange (already received)
+            elif response_json.get("msg") == "SAME TYPE EXCHANGE." and response_json.get("err_code") == 40011:
+                return session, "ALREADY_RECEIVED"
+
+            # Handle expired code
+            elif response_json.get("msg") == "TIME ERROR." and response_json.get("err_code") == 40007:
+                return session, "CODE_EXPIRED"
+
+            # Handle unknown errors
+            else:
+                print(f"[ERROR] Unexpected response for {player_id}: {response_json}")
+                return session, "ERROR"
 
     async def giftcode_autocomplete(
         self, interaction: discord.Interaction, current: str
@@ -182,6 +191,17 @@ class GiftCommand(commands.Cog):
                 elif response_status == "ERROR":
                     print(f"[ERROR] Error occurred for user {fid} ({nickname}) when using code {giftcode}.")
                     error_count += 1
+                elif response_status == "CODE_EXPIRED":
+                    print(f"[ERROR] Gift code {giftcode} is expired. Stopping process.")
+                    await notify_message.delete()
+                    await interaction.followup.send(
+                        embed=discord.Embed(
+                            title="Invalid Gift Code",
+                            description="The gift code used is expired. Please check the gift code.",
+                            color=discord.Color.red()
+                        )
+                    )
+                    return
                 elif response_status == "CDK_NOT_FOUND":
                     print(f"[ERROR] Gift code {giftcode} not found for user {fid} ({nickname}). Stopping process.")
                     await notify_message.delete()
