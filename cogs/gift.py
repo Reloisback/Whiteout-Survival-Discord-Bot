@@ -68,7 +68,7 @@ class GiftCommand(commands.Cog):
             data_to_encode = {
                 "fid": f"{player_id}",
                 "cdk": giftcode,
-                "time": f"{int(datetime.now().timestamp() * 1000)}",  # Ensure timestamp is in milliseconds
+                "time": f"{int(datetime.now().timestamp())}",
             }
             data = self.encode_data(data_to_encode)
 
