@@ -534,7 +534,7 @@ class BotOperations(commands.Cog):
                                     )
                                 else:
                                     info_embed.add_field(
-                                        name="🏰 Yetkili Olduğu İttifaklar",
+                                        name="🏰 Alliances Authorized",
                                         value="This manager does not yet have an authorized alliance.",
                                         inline=False
                                     )
