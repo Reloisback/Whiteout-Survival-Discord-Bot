@@ -14,11 +14,12 @@ from .alliance_member_operations import AllianceSelectView
 from .alliance import PaginatedChannelView
 import os
 import traceback
+from .gift_operationsapi import GiftCodeAPI
 from bs4 import BeautifulSoup
 from discord_webhook import DiscordWebhook
-WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK"  # Replace with your Discord webhook
-from .gift_operationsapi import GiftCodeAPI
 
+
+WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK"  # Replace with your Discord webhook
 
 class GiftOperations(commands.Cog):
     def __init__(self, bot):
@@ -63,7 +64,7 @@ class GiftOperations(commands.Cog):
         self.wos_giftcode_url = "https://wos-giftcode-api.centurygame.com/api/gift_code"
         self.wos_giftcode_redemption_url = "https://wos-giftcode.centurygame.com"
         self.wos_encrypt_key = "tB87#kPtkxqOS2"
-
+        
         self.retry_config = Retry(
             total=5,
             backoff_factor=1,
@@ -210,10 +211,7 @@ class GiftOperations(commands.Cog):
         self.log_directory = 'log'
         if not os.path.exists(self.log_directory):
             os.makedirs(self.log_directory)
-
-
-
-
+            
     @commands.Cog.listener()
     async def on_ready(self):
         try:
@@ -429,8 +427,8 @@ class GiftOperations(commands.Cog):
 
     async def claim_giftcode_rewards_wos(self, player_id, giftcode):
         try:
-            log_file_path = self.log_file_path
-
+            log_file_path = os.path.join(self.log_directory, 'giftlog.txt')
+            
             if player_id != "244886619":
                 self.cursor.execute("""
                     SELECT status FROM user_giftcodes 
@@ -2538,5 +2536,4 @@ class GiftView(discord.ui.View):
             pass
 
 async def setup(bot):
-    await bot.add_cog(GiftOperations(bot))
-    print("✅ GiftOperations cog loaded successfully!")
+    await bot.add_cog(GiftOperations(bot)) 
