@@ -57,6 +57,10 @@ class Control(commands.Cog):
         self.alliance_tasks = {}
         self.is_running = {}
         self.monitor_started = False
+        
+        self.control_queue = asyncio.Queue()
+        self.control_lock = asyncio.Lock()
+        self.current_control = None
 
     def load_proxies(self):
         proxies = []
@@ -288,42 +292,156 @@ class Control(commands.Cog):
         embed.set_footer(text="🔄 Alliance Control System")
         await channel.send(embed=embed)
 
-    async def schedule_alliance_check(self, channel, alliance_id, current_interval):
-        
-        while self.is_running.get(alliance_id, False):
+    async def process_control_queue(self):
+        print("[CONTROL] Queue processor started")
+        while True:
             try:
-                async with self.db_lock:
-                    self.cursor_alliance.execute("""
-                        SELECT interval 
-                        FROM alliancesettings 
-                        WHERE alliance_id = ?
-                    """, (alliance_id,))
-                    result = self.cursor_alliance.fetchone()
-                    
-                    if not result or result[0] == 0:
-                        self.is_running[alliance_id] = False
-                        break
-                    
-                    new_interval = result[0]
-                    if new_interval != current_interval:
-                        print(f"Interval changed for alliance {alliance_id}: {current_interval} -> {new_interval}")
-                        self.is_running[alliance_id] = False
-                        break
-
-                await self.check_agslist(channel, alliance_id)
+                control_task = await self.control_queue.get()
+                channel = control_task['channel']
+                alliance_id = control_task['alliance_id']
+                is_manual = control_task.get('is_manual', False)
                 
-                await asyncio.sleep(current_interval * 60)
+                print(f"[CONTROL] Processing alliance ID: {alliance_id} (Manual: {is_manual})")
+                
+                if self.current_control:
+                    await self.current_control
+                
+                print(f"[CONTROL] Starting control for alliance ID: {alliance_id}")
+                
+                self.cursor_alliance.execute("""
+                    SELECT name FROM alliance_list 
+                    WHERE alliance_id = ?
+                """, (alliance_id,))
+                alliance_name = self.cursor_alliance.fetchone()[0]
+                
+                self.cursor_users.execute("SELECT COUNT(*) FROM users WHERE alliance = ?", (alliance_id,))
+                member_count = self.cursor_users.fetchone()[0]
+                
+                self.current_control = asyncio.create_task(self.check_agslist(channel, alliance_id))
+                await self.current_control
+                
+                self.current_control = None
+                self.control_queue.task_done()
+                
+                print(f"[CONTROL] Completed control for alliance ID: {alliance_id}")
+                
+                if not is_manual:
+                    await asyncio.sleep(60)
                 
             except Exception as e:
-                await asyncio.sleep(60)
+                print(f"[ERROR] Error in process_control_queue: {str(e)}")
+                import traceback
+                traceback.print_exc()
+                
+                error_embed = discord.Embed(
+                    title="⚠️ Control Process Error",
+                    description=f"An error occurred during the control process:\n```{str(e)}```",
+                    color=discord.Color.red()
+                )
+                try:
+                    await channel.send(embed=error_embed)
+                except:
+                    pass
+                
+                if not is_manual:
+                    await asyncio.sleep(60)
+
+    async def schedule_alliance_check(self, channel, alliance_id, current_interval):
+        try:
+            await asyncio.sleep(current_interval * 60)
+            
+            while self.is_running.get(alliance_id, False):
+                try:
+                    async with self.db_lock:
+                        self.cursor_alliance.execute("""
+                            SELECT interval 
+                            FROM alliancesettings 
+                            WHERE alliance_id = ?
+                        """, (alliance_id,))
+                        result = self.cursor_alliance.fetchone()
+                        
+                        if not result or result[0] == 0:
+                            print(f"[CONTROL] Stopping checks for alliance {alliance_id} - interval disabled")
+                            self.is_running[alliance_id] = False
+                            break
+                        
+                        new_interval = result[0]
+                        if new_interval != current_interval:
+                            print(f"[CONTROL] Interval changed for alliance {alliance_id}: {current_interval} -> {new_interval}")
+                            self.is_running[alliance_id] = False
+                            self.alliance_tasks[alliance_id] = asyncio.create_task(
+                                self.schedule_alliance_check(channel, alliance_id, new_interval)
+                            )
+                            break
+
+                    await self.control_queue.put({
+                        'channel': channel,
+                        'alliance_id': alliance_id
+                    })
+                    
+                    await asyncio.sleep(current_interval * 60)
+                    
+                except Exception as e:
+                    print(f"[ERROR] Error in schedule_alliance_check for alliance {alliance_id}: {e}")
+                    await asyncio.sleep(60)
+                    
+        except Exception as e:
+            print(f"[ERROR] Fatal error in schedule_alliance_check for alliance {alliance_id}: {e}")
+            traceback.print_exc()
 
     @commands.Cog.listener()
     async def on_ready(self):
         if not self.monitor_started:
-            if not self.monitor_alliance_changes.is_running():
-                self.monitor_alliance_changes.start()
-                await self.start_alliance_checks()
-                self.monitor_started = True
+            print("[CONTROL] Starting monitor and queue processor...")
+            self._queue_processor_task = asyncio.create_task(self.process_control_queue())
+            self.monitor_alliance_changes.start()
+            await self.start_alliance_checks()
+            self.monitor_started = True
+            print("[CONTROL] Monitor and queue processor started successfully")
+
+    async def start_alliance_checks(self):
+        try:
+            for task in self.alliance_tasks.values():
+                if not task.done():
+                    task.cancel()
+            self.alliance_tasks.clear()
+            self.is_running.clear()
+
+            async with self.db_lock:
+                self.cursor_alliance.execute("""
+                    SELECT alliance_id, channel_id, interval 
+                    FROM alliancesettings
+                    WHERE interval > 0
+                """)
+                alliances = self.cursor_alliance.fetchall()
+
+                if not alliances:
+                    print("[CONTROL] No alliances with intervals found")
+                    return
+
+                print(f"[CONTROL] Found {len(alliances)} alliances with intervals")
+                
+                for alliance_id, channel_id, interval in alliances:
+                    channel = self.bot.get_channel(channel_id)
+                    if channel is not None:
+                        print(f"[CONTROL] Starting initial check for alliance {alliance_id}")
+                        await self.control_queue.put({
+                            'channel': channel,
+                            'alliance_id': alliance_id
+                        })
+                        
+                        self.is_running[alliance_id] = True
+                        self.alliance_tasks[alliance_id] = asyncio.create_task(
+                            self.schedule_alliance_check(channel, alliance_id, interval)
+                        )
+                        
+                        await asyncio.sleep(2)
+                    else:
+                        print(f"[CONTROL] Channel not found for alliance {alliance_id}")
+
+        except Exception as e:
+            print(f"[ERROR] Error in start_alliance_checks: {e}")
+            traceback.print_exc()
 
     async def cog_load(self):
         try:
@@ -384,39 +502,6 @@ class Control(commands.Cog):
         if self.monitor_alliance_changes.failed():
             print(Fore.RED + "Monitor alliance changes task failed. Restarting..." + Style.RESET_ALL)
             self.monitor_alliance_changes.restart()
-
-    async def start_alliance_checks(self):
-        try:
-            for task in self.alliance_tasks.values():
-                if not task.done():
-                    task.cancel()
-            self.alliance_tasks.clear()
-            self.is_running.clear()
-
-            async with self.db_lock:
-                self.cursor_alliance.execute("""
-                    SELECT alliance_id, channel_id, interval 
-                    FROM alliancesettings
-                    WHERE interval > 0
-                """)
-                alliances = self.cursor_alliance.fetchall()
-
-                if not alliances:
-                    return
-
-                for alliance_id, channel_id, interval in alliances:
-                    channel = self.bot.get_channel(channel_id)
-                    if channel is not None:
-                        task_name = f"alliance_check_{alliance_id}_{channel_id}"
-                        self.is_running[alliance_id] = True
-                        self.alliance_tasks[task_name] = asyncio.create_task(
-                            self.schedule_alliance_check(channel, alliance_id, interval)
-                        )
-
-        except Exception as e:
-            print(f"[ERROR] Error in start_alliance_checks: {e}")
-            import traceback
-            print(traceback.format_exc())
 
 async def setup(bot):
     control_cog = Control(bot)

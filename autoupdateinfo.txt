@@ -1,23 +1,24 @@
-Version= V4.0
+Version= V4.6
 Documants;
-main.py = V4.5
-cogs/alliance.py = V4.2
+main.py = V4.6
+cogs/alliance.py = V4.3
 cogs/alliance_member_operations.py = V4.4
-cogs/bot_operations.py = V4.2
+cogs/bot_operations.py = V4.3
 cogs/changes.py = V4.0
-cogs/gift_operations.py = V4.5
+cogs/gift_operations.py = V4.6
 cogs/logsystem.py = V4.1
 cogs/olddb.py = V4.2
-cogs/other_features.py = V4.2
+cogs/other_features.py = V4.3
 cogs/support_operations.py = V4.0
 cogs/w.py = V4.0
 cogs/wel.py = V4.1
-cogs/control.py = V4.1
+cogs/control.py = V4.2
 cogs/bear_trap.py = V4.2
 cogs/id_channel.py = V4.0
+cogs/backup_operations.py = V4.1
+cogs/gift_operationsapi.py = V4.0
 
 Updated Info;
-- In the absence of Github access, updates will now be checked extra on our site wosland.com
-- You will now be able to copy the EMBEDs you created for notifications and paste them when creating an embed
-- Fixed the issue where the remaining time was not displayed when you type %t while creating and sending a Mention Message in Embed Message. 
-- Fixed some channels not appearing when selecting channels when setting notifications
+- backup_operations.py: No more annoying automatic backup messages
+- backup_operations.py: Backup records are kept in the log folder
+- backup_operations.py: SSL issue fixed

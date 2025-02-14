@@ -3,6 +3,7 @@ from discord import app_commands
 from discord.ext import commands
 import sqlite3  
 import asyncio
+from datetime import datetime
 
 class Alliance(commands.Cog):
     def __init__(self, bot, conn):
@@ -294,6 +295,12 @@ class Alliance(commands.Cog):
                         custom_id="view_alliances"
                     ))
                     view.add_item(discord.ui.Button(
+                        label="Check Alliance", 
+                        emoji="🔍",
+                        style=discord.ButtonStyle.primary, 
+                        custom_id="check_alliance"
+                    ))
+                    view.add_item(discord.ui.Button(
                         label="Main Menu", 
                         emoji="🏠",
                         style=discord.ButtonStyle.secondary, 
@@ -307,6 +314,193 @@ class Alliance(commands.Cog):
                         await interaction.response.send_message("You do not have permission to perform this action.", ephemeral=True)
                         return
                     await self.edit_alliance(interaction)
+
+                elif custom_id == "check_alliance":
+                    self.c.execute("""
+                        SELECT a.alliance_id, a.name, COALESCE(s.interval, 0) as interval
+                        FROM alliance_list a
+                        LEFT JOIN alliancesettings s ON a.alliance_id = s.alliance_id
+                        ORDER BY a.name
+                    """)
+                    alliances = self.c.fetchall()
+
+                    if not alliances:
+                        await interaction.response.send_message("No alliances found to check.", ephemeral=True)
+                        return
+
+                    options = [
+                        discord.SelectOption(
+                            label="Check All Alliances",
+                            value="all",
+                            description="Start control process for all alliances",
+                            emoji="🔄"
+                        )
+                    ]
+                    
+                    options.extend([
+                        discord.SelectOption(
+                            label=f"{name[:40]}",
+                            value=str(alliance_id),
+                            description=f"Control Interval: {interval} minutes"
+                        ) for alliance_id, name, interval in alliances
+                    ])
+
+                    select = discord.ui.Select(
+                        placeholder="Select an alliance to check",
+                        options=options,
+                        custom_id="alliance_check_select"
+                    )
+
+                    async def alliance_check_callback(select_interaction: discord.Interaction):
+                        try:
+                            selected_value = select_interaction.data["values"][0]
+                            control_cog = self.bot.get_cog('Control')
+                            
+                            if not control_cog:
+                                await select_interaction.response.send_message("Control module not found.", ephemeral=True)
+                                return
+                            
+                            if not hasattr(control_cog, '_queue_processor_task') or control_cog._queue_processor_task.done():
+                                control_cog._queue_processor_task = asyncio.create_task(control_cog.process_control_queue())
+                            
+                            if selected_value == "all":
+                                progress_embed = discord.Embed(
+                                    title="🔄 Alliance Control Queue",
+                                    description=(
+                                        "**Control Queue Information**\n"
+                                        "━━━━━━━━━━━━━━━━━━━━━━\n"
+                                        f"📊 **Total Alliances:** `{len(alliances)}`\n"
+                                        "🔄 **Status:** `Adding alliances to control queue...`\n"
+                                        "⏰ **Queue Start:** `Now`\n"
+                                        "⚠️ **Note:** `Each alliance will be processed in sequence`\n"
+                                        "⏱️ **Wait Time:** `1 minute between each alliance control`\n"
+                                        "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                                        "⌛ Please wait while alliances are being processed..."
+                                    ),
+                                    color=discord.Color.blue()
+                                )
+                                await select_interaction.response.send_message(embed=progress_embed)
+                                
+                                for index, (alliance_id, name, _) in enumerate(alliances):
+                                    try:
+                                        queue_status_embed = discord.Embed(
+                                            title="🔄 Alliance Control Queue",
+                                            description=(
+                                                "**Control Queue Information**\n"
+                                                "━━━━━━━━━━━━━━━━━━━━━━\n"
+                                                f"📊 **Total Alliances:** `{len(alliances)}`\n"
+                                                f"🔄 **Current Alliance:** `{name}`\n"
+                                                f"📈 **Progress:** `{index + 1}/{len(alliances)}`\n"
+                                                f"⏰ **Queue Start:** <t:{int(datetime.now().timestamp())}:R>\n"
+                                                "⏱️ **Wait Time:** `1 minute between each alliance control`\n"
+                                                "━━━━━━━━━━━━━━━━━━━━━━\n\n"
+                                                "⌛ Control in progress..."
+                                            ),
+                                            color=discord.Color.blue()
+                                        )
+                                        await select_interaction.edit_original_response(embed=queue_status_embed)
+                                        
+                                        self.c.execute("""
+                                            SELECT channel_id FROM alliancesettings WHERE alliance_id = ?
+                                        """, (alliance_id,))
+                                        channel_data = self.c.fetchone()
+                                        channel = self.bot.get_channel(channel_data[0]) if channel_data else select_interaction.channel
+                                        
+                                        await control_cog.control_queue.put({
+                                            'channel': channel,
+                                            'alliance_id': alliance_id,
+                                            'is_manual': True
+                                        })
+                                        
+                                        while control_cog.current_control:
+                                            await asyncio.sleep(1)
+                                        
+                                        if index < len(alliances) - 1:
+                                            await asyncio.sleep(60)
+                                    
+                                    except Exception as e:
+                                        print(f"Error processing alliance {name}: {e}")
+                                        continue
+                                
+                                queue_complete_embed = discord.Embed(
+                                    title="✅ Alliance Control Queue Complete",
+                                    description=(
+                                        "**Queue Status Information**\n"
+                                        "━━━━━━━━━━━━━━━━━━━━━━\n"
+                                        f"📊 **Total Alliances:** `{len(alliances)}`\n"
+                                        "🔄 **Status:** `All controls completed`\n"
+                                        f"⏰ **Completion Time:** <t:{int(datetime.now().timestamp())}:R>\n"
+                                        "📝 **Note:** `Control results have been shared in respective channels`\n"
+                                        "━━━━━━━━━━━━━━━━━━━━━━"
+                                    ),
+                                    color=discord.Color.green()
+                                )
+                                await select_interaction.edit_original_response(embed=queue_complete_embed)
+                            
+                            else:
+                                alliance_id = int(selected_value)
+                                self.c.execute("""
+                                    SELECT a.name, s.channel_id 
+                                    FROM alliance_list a
+                                    LEFT JOIN alliancesettings s ON a.alliance_id = s.alliance_id
+                                    WHERE a.alliance_id = ?
+                                """, (alliance_id,))
+                                alliance_data = self.c.fetchone()
+
+                                if not alliance_data:
+                                    await select_interaction.response.send_message("Alliance not found.", ephemeral=True)
+                                    return
+
+                                alliance_name, channel_id = alliance_data
+                                channel = self.bot.get_channel(channel_id) if channel_id else select_interaction.channel
+                                
+                                status_embed = discord.Embed(
+                                    title="🔍 Alliance Control",
+                                    description=(
+                                        f"Control process will start for alliance **{alliance_name}**.\n\n"
+                                        "**Process Information**\n"
+                                        "━━━━━━━━━━━━━━━━━━━━━━\n"
+                                        "• Status: `Queued`\n"
+                                        "• Process: `Starting...`\n"
+                                        "• Channel: `Results will be shared in the designated channel`\n"
+                                        "━━━━━━━━━━━━━━━━━━━━━━"
+                                    ),
+                                    color=discord.Color.blue()
+                                )
+                                await select_interaction.response.send_message(embed=status_embed)
+                                
+                                await control_cog.control_queue.put({
+                                    'channel': channel,
+                                    'alliance_id': alliance_id,
+                                    'is_manual': True
+                                })
+
+                        except Exception as e:
+                            print(f"Alliance check error: {e}")
+                            await select_interaction.response.send_message(
+                                "An error occurred during the control process.", 
+                                ephemeral=True
+                            )
+
+                    select.callback = alliance_check_callback
+                    view = discord.ui.View()
+                    view.add_item(select)
+
+                    embed = discord.Embed(
+                        title="🔍 Alliance Control",
+                        description=(
+                            "Please select an alliance to check:\n\n"
+                            "**Information**\n"
+                            "━━━━━━━━━━━━━━━━━━━━━━\n"
+                            "• Select 'Check All Alliances' to process all alliances\n"
+                            "• Control process may take a few minutes\n"
+                            "• Results will be shared in the designated channel\n"
+                            "• Other controls will be queued during the process\n"
+                            "━━━━━━━━━━━━━━━━━━━━━━"
+                        ),
+                        color=discord.Color.blue()
+                    )
+                    await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
 
                 elif custom_id == "member_operations":
                     await self.bot.get_cog("AllianceMemberOperations").handle_member_operations(interaction)

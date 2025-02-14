@@ -534,7 +534,7 @@ class BotOperations(commands.Cog):
                                     )
                                 else:
                                     info_embed.add_field(
-                                        name="🏰 Yetkili Olduğu İttifaklar",
+                                        name="🏰 Alliances Authorized",
                                         value="This manager does not yet have an authorized alliance.",
                                         inline=False
                                     )
@@ -1001,19 +1001,19 @@ class BotOperations(commands.Cog):
                     )
                     return
 
-                embed = discord.Embed(
+                main_embed = discord.Embed(
                     title="🔄 Bot Update Status",
                     color=discord.Color.blue() if not updates_needed else discord.Color.yellow()
                 )
 
-                embed.add_field(
+                main_embed.add_field(
                     name="Current Version",
                     value=f"`{current_version}`",
                     inline=True
                 )
 
                 if updates_needed:
-                    embed.add_field(
+                    main_embed.add_field(
                         name="Updates Available",
                         value="The following files need to be updated:",
                         inline=False
@@ -1022,21 +1022,49 @@ class BotOperations(commands.Cog):
                     update_text = ""
                     for update in updates_needed:
                         update_text += f"• `{update['file']}`: {update['current']} → {update['new']}\n"
-                    embed.add_field(
+                    main_embed.add_field(
                         name="Files to Update",
                         value=update_text,
                         inline=False
                     )
-                    
+
                     if update_notes:
-                        notes_text = "\n".join([f"• {note}" for note in update_notes])
-                        embed.add_field(
-                            name="Update Notes",
-                            value=notes_text,
-                            inline=False
-                        )
-                    
-                    embed.add_field(
+                        notes_chunks = []
+                        current_chunk = []
+                        current_length = 0
+                        
+                        for note in update_notes:
+                            note_length = len(note)
+                            if current_length + note_length > 900:
+                                notes_chunks.append(current_chunk)
+                                current_chunk = [note]
+                                current_length = note_length
+                            else:
+                                current_chunk.append(note)
+                                current_length += note_length
+                        
+                        if current_chunk:
+                            notes_chunks.append(current_chunk)
+
+                        if notes_chunks:
+                            first_chunk_text = "\n".join([f"• {note}" for note in notes_chunks[0]])
+                            main_embed.add_field(
+                                name="Update Notes (1/" + str(len(notes_chunks)) + ")",
+                                value=first_chunk_text,
+                                inline=False
+                            )
+
+                        additional_embeds = []
+                        for i, chunk in enumerate(notes_chunks[1:], 2):
+                            embed = discord.Embed(
+                                title=f"🔄 Update Notes ({i}/{len(notes_chunks)})",
+                                color=discord.Color.yellow()
+                            )
+                            chunk_text = "\n".join([f"• {note}" for note in chunk])
+                            embed.description = chunk_text
+                            additional_embeds.append(embed)
+
+                    main_embed.add_field(
                         name="How to Update",
                         value=(
                             "To update to the new version:\n"
@@ -1047,12 +1075,19 @@ class BotOperations(commands.Cog):
                         inline=False
                     )
                 else:
-                    embed.description = "✅ Your bot is up to date!"
+                    main_embed.description = "✅ Your bot is up to date!"
 
                 await interaction.response.send_message(
-                    embed=embed,
+                    embed=main_embed,
                     ephemeral=True
                 )
+
+                if updates_needed and update_notes and len(notes_chunks) > 1:
+                    for additional_embed in additional_embeds:
+                        await interaction.followup.send(
+                            embed=additional_embed,
+                            ephemeral=True
+                        )
 
             except Exception as e:
                 print(f"Check updates error: {e}")

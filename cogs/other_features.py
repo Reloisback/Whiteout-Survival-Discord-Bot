@@ -23,6 +23,10 @@ class OtherFeatures(commands.Cog):
                     "└ Create and manage ID channels\n"
                     "└ Automatic ID verification system\n"
                     "└ Custom channel settings\n\n"
+                    "💾 **Backup System**\n"
+                    "└ Automatic database backup\n"
+                    "└ Secure backup storage\n"
+                    "└ Only for Global Admins\n\n"
                     "━━━━━━━━━━━━━━━━━━━━━━"
                 ),
                 color=discord.Color.blue()
@@ -93,6 +97,30 @@ class OtherFeaturesView(discord.ui.View):
             print(f"Error loading ID Channel menu: {e}")
             await interaction.response.send_message(
                 "❌ An error occurred while loading ID Channel menu.",
+                ephemeral=True
+            )
+
+    @discord.ui.button(
+        label="Backup System",
+        emoji="💾",
+        style=discord.ButtonStyle.primary,
+        custom_id="backup_system",
+        row=1
+    )
+    async def backup_system_button(self, interaction: discord.Interaction, button: discord.ui.Button):
+        try:
+            backup_cog = self.cog.bot.get_cog("BackupOperations")
+            if backup_cog:
+                await backup_cog.show_backup_menu(interaction)
+            else:
+                await interaction.response.send_message(
+                    "❌ Backup System module not found.",
+                    ephemeral=True
+                )
+        except Exception as e:
+            print(f"Error loading Backup System menu: {e}")
+            await interaction.response.send_message(
+                "❌ An error occurred while loading Backup System menu.",
                 ephemeral=True
             )
 

@@ -13,7 +13,8 @@ def check_and_install_requirements():
         'aiohttp': 'aiohttp',
         'python-dotenv': 'python-dotenv',
         'aiohttp-socks': 'aiohttp-socks',
-        'pytz': 'pytz'
+        'pytz': 'pytz',
+        'pyzipper': 'pyzipper'
     }
     
     def install_package(package_name):
@@ -347,6 +348,7 @@ if __name__ == "__main__":
         await bot.load_extension("cogs.other_features")
         await bot.load_extension("cogs.bear_trap")
         await bot.load_extension("cogs.id_channel")
+        await bot.load_extension("cogs.backup_operations")
 
     @bot.event
     async def on_ready():
