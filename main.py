@@ -351,13 +351,24 @@ if __name__ == "__main__":
         await bot.load_extension("cogs.backup_operations")
         await bot.load_extension("cogs.bear_trap_editor")
 
+
+    @bot.tree.command(name="sync", description="Sync bot commands with Discord")
+    async def sync(interaction: discord.Interaction):
+        if interaction.user.guild_permissions.administrator:
+            await bot.tree.sync()
+            await interaction.response.send_message("✅ Commands synced!", ephemeral=True)
+        else:
+            await interaction.response.send_message("❌ You don't have permission to sync commands.", ephemeral=True)
+
+
     @bot.event
     async def on_ready():
         try:
-            print(f"{Fore.GREEN}Logged in as {Fore.CYAN}{bot.user}{Style.RESET_ALL}")
+            # Force re-sync commands
             synced = await bot.tree.sync()
+            print(f"✅ Re-synced {len(synced)} commands: {[cmd.name for cmd in synced]}")
         except Exception as e:
-            print(f"Error syncing commands: {e}")
+            print(f"⚠️ Failed to sync commands: {e}")
 
     async def main():
         if check_and_install_requirements():
