@@ -82,8 +82,14 @@ class GNCommands(commands.Cog):
                                 cursor = alliance_db.cursor()
                                 cursor.execute("SELECT discord_server_id FROM alliance_list WHERE alliance_id = ?", (alliance_id,))
                                 discord_server = cursor.fetchone()
-                                if discord_server and discord_server[0]:
-                                    info_parts.append(f"🌐 Server ID: {discord_server[0]}")
+                                if discord_server:
+                                    server_id = discord_server[0]
+                                    if server_id:
+                                        guild = self.bot.get_guild(server_id)
+                                        if guild:
+                                            info_parts.append(f"🌐 Server Name: {guild.name}")
+                                        else:
+                                            info_parts.append(f"🌐 Server ID: {server_id}")
                             
                                 cursor.execute("SELECT channel_id, interval FROM alliancesettings WHERE alliance_id = ?", (alliance_id,))
                                 settings = cursor.fetchone()
