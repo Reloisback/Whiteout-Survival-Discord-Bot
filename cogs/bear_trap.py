@@ -2253,7 +2253,19 @@ class BearTrapView(discord.ui.View):
             options = []
             for notif in notifications:
                 status = "🟢 Enabled" if notif[11] else "🔴 Disabled"
-                display_description = notif[6].split('|')[-1] if '|' in notif[6] else notif[6]
+                if "EMBED_MESSAGE:" in notif[6]:
+                        # Query the database for the embed title
+                        self.cog.cursor.execute("""
+                            SELECT title 
+                            FROM bear_notification_embeds 
+                            WHERE notification_id = ?
+                        """, (notif[0],))
+                        embed_data = self.cog.cursor.fetchone()
+                        display_description = f"📝 Embed: {embed_data[0]}" if embed_data and embed_data[0] else "📝 Embed Message"
+                else:
+                    display_description = notif[6].split('|')[-1] if '|' in notif[6] else notif[6]
+                    if display_description.startswith("PLAIN_MESSAGE:"):
+                        display_description = display_description.replace("PLAIN_MESSAGE:", "✍️ ")
                 options.append(
                     discord.SelectOption(
                         label=f"{notif[3]:02d}:{notif[4]:02d} - {display_description[:30]}",
