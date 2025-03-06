@@ -62,17 +62,35 @@ class Alliance(commands.Cog):
                     ORDER BY a.alliance_id ASC
                 """
                 self.c.execute(query)
+                alliances = self.c.fetchall()
             else:
-                query = """
+                # Get alliances linked to the current server
+                self.c.execute("""
                     SELECT a.alliance_id, a.name, COALESCE(s.interval, 0) as interval
                     FROM alliance_list a
                     LEFT JOIN alliancesettings s ON a.alliance_id = s.alliance_id
                     WHERE a.discord_server_id = ?
                     ORDER BY a.alliance_id ASC
-                """
-                self.c.execute(query, (guild_id,))
+                """, (guild_id,))
+                server_alliances = self.c.fetchall()
 
-            alliances = self.c.fetchall()
+                # Get alliances linked to the current admin
+                self.c_settings.execute("SELECT * FROM adminserver WHERE admin = ?", (user_id,))
+                admin_alliance_ids = self.c_settings.fetchall()
+                
+                admin_alliances = []
+                for alliance_id_tuple in admin_alliance_ids:
+                    alliance_id = alliance_id_tuple[2]
+                    self.c.execute("""
+                        SELECT a.alliance_id, a.name, COALESCE(s.interval, 0) as interval
+                        FROM alliance_list a
+                        LEFT JOIN alliancesettings s ON a.alliance_id = s.alliance_id
+                        WHERE a.alliance_id = ?
+                    """, (alliance_id,))
+                    admin_alliances.append(self.c.fetchone())
+
+                combined_alliances = set(server_alliances + admin_alliances)
+                alliances = list(combined_alliances)
 
             alliance_list = ""
             for alliance_id, name, interval in alliances:
@@ -316,13 +334,35 @@ class Alliance(commands.Cog):
                     await self.edit_alliance(interaction)
 
                 elif custom_id == "check_alliance":
-                    self.c.execute("""
-                        SELECT a.alliance_id, a.name, COALESCE(s.interval, 0) as interval
-                        FROM alliance_list a
-                        LEFT JOIN alliancesettings s ON a.alliance_id = s.alliance_id
-                        ORDER BY a.name
-                    """)
-                    alliances = self.c.fetchall()
+                    is_initial = admin[1]
+                    guild_id = interaction.guild.id
+
+                    if is_initial == 1:
+                        # If initial admin, show all alliances
+                        self.c.execute("""
+                            SELECT a.alliance_id, a.name, COALESCE(s.interval, 0) as interval
+                            FROM alliance_list a
+                            LEFT JOIN alliancesettings s ON a.alliance_id = s.alliance_id
+                            ORDER BY a.name
+                        """)
+                        alliances = self.c.fetchall()
+
+                    else:
+                        # Get alliances linked to the current admin
+                        self.c_settings.execute("SELECT * FROM adminserver WHERE admin = ?", (user_id,))
+                        admin_alliance_ids = self.c_settings.fetchall()
+                
+                        admin_alliances = []
+                        for alliance_id_tuple in admin_alliance_ids:
+                            alliance_id = alliance_id_tuple[2]
+                            self.c.execute("""
+                                SELECT a.alliance_id, a.name, COALESCE(s.interval, 0) as interval
+                                FROM alliance_list a
+                                LEFT JOIN alliancesettings s ON a.alliance_id = s.alliance_id
+                                WHERE a.alliance_id = ?
+                            """, (alliance_id,))
+                            admin_alliances.append(self.c.fetchone())
+                        alliances = admin_alliances
 
                     if not alliances:
                         await interaction.response.send_message("No alliances found to check.", ephemeral=True)
