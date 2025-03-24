@@ -165,10 +165,25 @@ if __name__ == "__main__":
                     if main_py_updated:
                         print(Fore.YELLOW + "\nNOTE: This update includes changes to main.py. Bot will restart after update." + Style.RESET_ALL)
 
-                    response = input("\nDo you want to update now? (y/n): ").lower()
+                    auto_update_env = os.getenv('AUTO_UPDATE')
+                    if auto_update_env is not None:
+                        auto_update = auto_update_env.lower() == 'true'
+                        print(f"AUTO_UPDATE is set to {'true' if auto_update else 'false'}.")
+                    else:
+                        auto_update = None
+
+                    if auto_update is True:
+                        print("Auto-update enabled. Proceeding with update...")
+                        response = 'y'
+                    elif auto_update is False:
+                        print("Auto-update disabled. Skipping update.")
+                        response = 'n'
+                    else:
+                        response = input("\nDo you want to update now? (y/n): ").lower()
+
                     if response == 'y':
                         needs_restart = False
-                        
+
                         for file_name, new_version in updates_needed:
                             if file_name.strip() != 'main.py':
                                 file_url = f"{source_url}/{file_name}"
@@ -241,14 +256,16 @@ if __name__ == "__main__":
 
     init(autoreset=True)
 
+    bot_token = os.getenv('BOT_TOKEN')
     token_file = 'bot_token.txt'
-    if not os.path.exists(token_file):
-        bot_token = input("Enter the bot token: ")
-        with open(token_file, 'w') as f:
-            f.write(bot_token)
-    else:
-        with open(token_file, 'r') as f:
-            bot_token = f.read().strip()
+    if not bot_token:
+        if not os.path.exists(token_file):
+            bot_token = input("Enter the bot token: ")
+            with open(token_file, 'w') as f:
+                f.write(bot_token)
+        else:
+            with open(token_file, 'r') as f:
+                bot_token = f.read().strip()
 
     if not os.path.exists('db'):
         os.makedirs('db')
