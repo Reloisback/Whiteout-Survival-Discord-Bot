@@ -622,6 +622,228 @@ class BearTrap(commands.Cog):
                 ephemeral=True
             )
 
+class SearchableSelectView(discord.ui.View):
+    def __init__(self, options, placeholder="Select an option", min_values=1, max_values=1):
+        super().__init__()
+        self.all_options = options
+        self.current_filter = ""
+        self.page = 0
+        self.filtered_options = options
+        
+        display_options = options[:25]
+        self.select = discord.ui.Select(
+            placeholder=placeholder,
+            min_values=min_values,
+            max_values=max_values,
+            options=display_options
+        )
+        self.add_item(self.select)
+        
+        self.setup_buttons()
+        
+    def setup_buttons(self):
+        self.search_button = discord.ui.Button(
+            style=discord.ButtonStyle.primary,
+            label="Search",
+            emoji="🔍",
+            row=1
+        )
+        self.search_button.callback = self.search_callback
+        self.add_item(self.search_button)
+        
+        if len(self.all_options) > 25:
+            self.prev_button = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="Previous",
+                emoji="⬅️",
+                disabled=True,
+                row=2
+            )
+            self.prev_button.callback = self.prev_callback
+            self.add_item(self.prev_button)
+            
+            self.next_button = discord.ui.Button(
+                style=discord.ButtonStyle.secondary,
+                label="Next",
+                emoji="➡️",
+                disabled=len(self.all_options) <= 25,
+                row=2
+            )
+            self.next_button.callback = self.next_callback
+            self.add_item(self.next_button)
+        
+        self.reset_button = discord.ui.Button(
+            style=discord.ButtonStyle.danger,
+            label="Reset Filter",
+            emoji="🔄",
+            row=1,
+            disabled=True
+        )
+        self.reset_button.callback = self.reset_callback
+        self.add_item(self.reset_button)
+    
+    async def search_callback(self, interaction):
+        modal = discord.ui.Modal(title="Search Notifications")
+        search_input = discord.ui.TextInput(
+            label="Search Term",
+            placeholder="Enter text to search for...",
+            default=self.current_filter
+        )
+        modal.add_item(search_input)
+        
+        async def on_modal_submit(modal_interaction):
+            search_term = search_input.value
+            self.current_filter = search_term
+            
+            if search_term:
+                self.filtered_options = [
+                    opt for opt in self.all_options
+                    if search_term.lower() in opt.label.lower() or 
+                    (opt.description and search_term.lower() in opt.description.lower())
+                ]
+            else:
+                self.filtered_options = self.all_options
+            
+            if search_term and not self.filtered_options:
+                no_results_view = discord.ui.View()
+                
+                reset_button = discord.ui.Button(
+                    style=discord.ButtonStyle.primary,
+                    label="Reset Filter",
+                    emoji="🔄",
+                    row=0
+                )
+                
+                async def reset_callback(reset_interaction):
+                    new_view = SearchableSelectView(
+                        self.all_options, 
+                        self.select.placeholder
+                    )
+                    new_view.all_options = self.all_options
+                    
+                    if hasattr(self, 'select') and hasattr(self.select, 'callback'):
+                        new_view.select.callback = self.select.callback
+                    
+                    await reset_interaction.response.edit_message(
+                        content="Select a notification:",
+                        view=new_view
+                    )
+                
+                reset_button.callback = reset_callback
+                no_results_view.add_item(reset_button)
+                
+                await modal_interaction.response.edit_message(
+                    content=f"❌ No results found for '{search_term}'. Please try again.",
+                    view=no_results_view
+                )
+                return
+            
+            self.page = 0
+            
+            new_view = SearchableSelectView(self.filtered_options, self.select.placeholder)
+            new_view.all_options = self.all_options
+            new_view.current_filter = search_term
+            
+            if hasattr(self, 'select') and hasattr(self.select, 'callback'):
+                new_view.select.callback = self.select.callback
+            
+            new_view.reset_button.disabled = not search_term
+            
+            total_pages = max(1, (len(new_view.filtered_options) + 24) // 25)
+            status_text = f"Filter: {search_term}" if search_term else ""
+            status_text += f" | {len(new_view.filtered_options)} results found" if search_term else ""
+            status_text += f" | Page 1/{total_pages}"
+            
+            await modal_interaction.response.edit_message(
+                content=f"Search results: {status_text}" if search_term else "Select a notification:",
+                view=new_view
+            )
+        
+        modal.on_submit = on_modal_submit
+        await interaction.response.send_modal(modal)
+        
+    async def prev_callback(self, interaction):
+        if self.page > 0:
+            self.page -= 1
+            
+            new_view = SearchableSelectView(
+                self.filtered_options, 
+                self.select.placeholder
+            )
+            new_view.all_options = self.all_options
+            new_view.filtered_options = self.filtered_options
+            new_view.current_filter = self.current_filter
+            new_view.page = self.page
+            
+            start_idx = new_view.page * 25
+            new_view.select.options = new_view.filtered_options[start_idx:start_idx+25]
+            
+            if hasattr(self, 'select') and hasattr(self.select, 'callback'):
+                new_view.select.callback = self.select.callback
+            
+            new_view.prev_button.disabled = new_view.page == 0
+            max_page = (len(new_view.filtered_options) - 1) // 25
+            new_view.next_button.disabled = new_view.page >= max_page
+            new_view.reset_button.disabled = not new_view.current_filter
+            
+            total_pages = max(1, (len(new_view.filtered_options) + 24) // 25)
+            status_text = f"Filter: {new_view.current_filter}" if new_view.current_filter else ""
+            status_text += f" | Page {new_view.page+1}/{total_pages}"
+            
+            await interaction.response.edit_message(
+                content=f"Search results: {status_text}" if new_view.current_filter else "Select a notification:",
+                view=new_view
+            )
+            
+    async def next_callback(self, interaction):
+        max_page = (len(self.filtered_options) - 1) // 25
+        if self.page < max_page:
+            self.page += 1
+            
+            new_view = SearchableSelectView(
+                self.filtered_options, 
+                self.select.placeholder
+            )
+            new_view.all_options = self.all_options
+            new_view.filtered_options = self.filtered_options
+            new_view.current_filter = self.current_filter
+            new_view.page = self.page
+            
+            start_idx = new_view.page * 25
+            new_view.select.options = new_view.filtered_options[start_idx:start_idx+25]
+            
+            if hasattr(self, 'select') and hasattr(self.select, 'callback'):
+                new_view.select.callback = self.select.callback
+            
+            new_view.prev_button.disabled = False
+            max_page = (len(new_view.filtered_options) - 1) // 25
+            new_view.next_button.disabled = new_view.page >= max_page
+            new_view.reset_button.disabled = not new_view.current_filter
+            
+            total_pages = max(1, (len(new_view.filtered_options) + 24) // 25)
+            status_text = f"Filter: {new_view.current_filter}" if new_view.current_filter else ""
+            status_text += f" | Page {new_view.page+1}/{total_pages}"
+            
+            await interaction.response.edit_message(
+                content=f"Search results: {status_text}" if new_view.current_filter else "Select a notification:",
+                view=new_view
+            )
+            
+    async def reset_callback(self, interaction):
+        new_view = SearchableSelectView(
+            self.all_options, 
+            self.select.placeholder
+        )
+        new_view.all_options = self.all_options
+        
+        if hasattr(self, 'select') and hasattr(self.select, 'callback'):
+            new_view.select.callback = self.select.callback
+        
+        await interaction.response.edit_message(
+            content="Select a notification:",
+            view=new_view
+        )
+
 class RepeatOptionView(discord.ui.View):
     def __init__(self, cog, start_date, hour, minute, timezone, description, channel_id, notification_type, mention_type, original_message):
         super().__init__(timeout=300)
@@ -1869,6 +2091,11 @@ class BearTrapView(discord.ui.View):
             options = []
             for notif in notifications:
                 display_description = notif[6].split('|')[-1] if '|' in notif[6] else notif[6]
+                if "EMBED_MESSAGE:" in display_description:
+                    display_description = "Embed Message"
+                elif display_description.startswith("PLAIN_MESSAGE:"):
+                    display_description = display_description.replace("PLAIN_MESSAGE:", "")
+                
                 options.append(
                     discord.SelectOption(
                         label=f"{notif[3]:02d}:{notif[4]:02d} - {display_description[:30]}",
@@ -1876,12 +2103,12 @@ class BearTrapView(discord.ui.View):
                         value=str(notif[0])
                     )
                 )
-            select = discord.ui.Select(
-                placeholder="Select a notification to remove",
-                options=options[:25]
-            )
+            
+            options.sort(key=lambda option: option.label)
+                
+            view = SearchableSelectView(options, placeholder="Select a notification to remove")
 
-            async def select_callback(select_interaction):
+            async def select_callback(select_interaction: discord.Interaction):
                 try:
                     notification_id = int(select_interaction.data["values"][0])
                     selected_notif = next(n for n in notifications if n[0] == notification_id)
@@ -1990,12 +2217,10 @@ class BearTrapView(discord.ui.View):
                         ephemeral=True
                     )
 
-            select.callback = select_callback
-            view = discord.ui.View()
-            view.add_item(select)
+            view.select.callback = select_callback
             
             await interaction.response.send_message(
-                "Select a notification to remove:",
+                "Select a notification:",
                 view=view,
                 ephemeral=True
             )
@@ -2054,14 +2279,12 @@ class BearTrapView(discord.ui.View):
                         value=str(notif[0])
                     )
                 )
-            select = discord.ui.Select(
-                placeholder="Select a notification to view details",
-                options=options[:25]
-            )
+                
+            options.sort(key=lambda option: option.label)
+            
+            view = SearchableSelectView(options, placeholder="Select a notification to view details")
 
-            view = discord.ui.View()
-
-            async def select_callback(select_interaction):
+            async def select_callback(select_interaction: discord.Interaction):
                 try:
                     notification_id = int(select_interaction.data["values"][0])
                     selected_notif = next(n for n in notifications if n[0] == notification_id)
@@ -2180,8 +2403,24 @@ class BearTrapView(discord.ui.View):
                         
                         embed_json = json.dumps(copyable_data, indent=2)
 
-                        view = discord.ui.View()
-                        view.add_item(select)
+                        back_view = discord.ui.View()
+                        back_button = discord.ui.Button(
+                            label="Back to List", 
+                            style=discord.ButtonStyle.secondary
+                        )
+                        
+                        async def back_callback(back_interaction):
+                            new_view = SearchableSelectView(options, placeholder="Select a notification to view details")
+                            new_view.select.callback = select_callback
+                            
+                            await back_interaction.response.edit_message(
+                                content="Select a notification:",
+                                embeds=[],
+                                view=new_view
+                            )
+                            
+                        back_button.callback = back_callback
+                        back_view.add_item(back_button)
 
                         content = "**📋 Notification Details**\n\n"
                         content += f"**Embed Code:**\n```json\n{embed_json}\n```\n"
@@ -2191,11 +2430,27 @@ class BearTrapView(discord.ui.View):
                         await select_interaction.response.edit_message(
                             content=content,
                             embeds=[details_embed, preview_embed],
-                            view=view
+                            view=back_view
                         )
                     else:
-                        view = discord.ui.View()
-                        view.add_item(select)
+                        back_view = discord.ui.View()
+                        back_button = discord.ui.Button(
+                            label="Back to List", 
+                            style=discord.ButtonStyle.secondary
+                        )
+                        
+                        async def back_callback(back_interaction):
+                            new_view = SearchableSelectView(options, placeholder="Select a notification to view details")
+                            new_view.select.callback = select_callback
+                            
+                            await back_interaction.response.edit_message(
+                                content="Select a notification:",
+                                embeds=[],
+                                view=new_view
+                            )
+                            
+                        back_button.callback = back_callback
+                        back_view.add_item(back_button)
                         
                         message_preview = None
                         if "PLAIN_MESSAGE:" in selected_notif[6]:
@@ -2203,9 +2458,9 @@ class BearTrapView(discord.ui.View):
                         
                         await select_interaction.response.edit_message(
                             content="**📋 Notification Details**" + 
-                                  (f"\n\n**Message Preview:**\n{message_preview}" if message_preview else ""),
+                                (f"\n\n**Message Preview:**\n{message_preview}" if message_preview else ""),
                             embed=details_embed,
-                            view=view
+                            view=back_view
                         )
 
                 except Exception as e:
@@ -2215,11 +2470,10 @@ class BearTrapView(discord.ui.View):
                         ephemeral=True
                     )
 
-            select.callback = select_callback
-            view.add_item(select)
+            view.select.callback = select_callback
             
             await interaction.response.send_message(
-                "Select a notification to view details:",
+                "Select a notification:",
                 view=view,
                 ephemeral=True
             )
@@ -2254,6 +2508,11 @@ class BearTrapView(discord.ui.View):
             for notif in notifications:
                 status = "🟢 Enabled" if notif[11] else "🔴 Disabled"
                 display_description = notif[6].split('|')[-1] if '|' in notif[6] else notif[6]
+                if "EMBED_MESSAGE:" in display_description:
+                    display_description = "Embed Message"
+                elif display_description.startswith("PLAIN_MESSAGE:"):
+                    display_description = display_description.replace("PLAIN_MESSAGE:", "")
+                    
                 options.append(
                     discord.SelectOption(
                         label=f"{notif[3]:02d}:{notif[4]:02d} - {display_description[:30]}",
@@ -2261,12 +2520,12 @@ class BearTrapView(discord.ui.View):
                         value=str(notif[0])
                     )
                 )
-            select = discord.ui.Select(
-                placeholder="Select a notification to toggle",
-                options=options[:25]
-            )
+                
+            options.sort(key=lambda option: option.label)
+            
+            view = SearchableSelectView(options, placeholder="Select a notification to toggle")
 
-            async def select_callback(select_interaction):
+            async def select_callback(select_interaction: discord.Interaction):
                 notification_id = int(select_interaction.data["values"][0])
                 current_status = next(n[11] for n in notifications if n[0] == notification_id)
                 new_status = not current_status
@@ -2285,12 +2544,10 @@ class BearTrapView(discord.ui.View):
                         ephemeral=True
                     )
 
-            select.callback = select_callback
-            view = discord.ui.View()
-            view.add_item(select)
+            view.select.callback = select_callback
             
             await interaction.response.send_message(
-                "Select a notification to toggle:",
+                "Select a notification:",
                 view=view,
                 ephemeral=True
             )
@@ -2370,13 +2627,12 @@ class BearTrapView(discord.ui.View):
                         value=str(notif[0])
                     )
                 )
+                
+            options.sort(key=lambda option: option.label)
 
-            select = discord.ui.Select(
-                placeholder="Select a notification to edit",
-                options=options[:25]
-            )
+            view = SearchableSelectView(options, placeholder="Select a notification to edit")
 
-            async def select_callback(select_interaction):
+            async def select_callback(select_interaction: discord.Interaction):
                 try:
                     notification_id = int(select_interaction.data["values"][0])
                     editor_cog = self.cog.bot.get_cog('BearTrapEditor')
@@ -2394,12 +2650,10 @@ class BearTrapView(discord.ui.View):
                         ephemeral=True
                     )
 
-            select.callback = select_callback
-            view = discord.ui.View()
-            view.add_item(select)
+            view.select.callback = select_callback
             
             await interaction.response.send_message(
-                "Select the notification you want to edit:",
+                "Select a notification:",
                 view=view,
                 ephemeral=True
             )
@@ -2538,6 +2792,7 @@ class ImportEmbedModal(discord.ui.Modal):
                 'mention_message': embed_data.get('mention_message') or '@tag'
             })
             
+            await interaction.response.defer()
             await self.embed_view.update_embed(interaction)
             await interaction.followup.send(
                 "✅ Embed imported successfully!",
