@@ -1,13 +1,13 @@
 import discord
-from discord.ext import commands
 import requests
+from discord import app_commands
 from requests.adapters import HTTPAdapter
-from requests.packages.urllib3.util.retry import Retry
+from urllib3.util.retry import Retry
 import hashlib
 import json
 from datetime import datetime
 import sqlite3
-from discord.ext import tasks
+from discord.ext import tasks, commands
 import asyncio
 import re
 from .alliance_member_operations import AllianceSelectView
@@ -15,10 +15,19 @@ from .alliance import PaginatedChannelView
 import os
 import traceback
 from .gift_operationsapi import GiftCodeAPI
+from bs4 import BeautifulSoup
+from discord_webhook import DiscordWebhook
+
+
+WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK"  # Replace with your Discord webhook
 
 class GiftOperations(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
+        # Log file setup
+        self.log_directory = "logs"
+        os.makedirs(self.log_directory, exist_ok=True)
+        self.log_file_path = os.path.join(self.log_directory, 'giftlog.txt')
         if hasattr(bot, 'conn'):
             self.conn = bot.conn
             self.cursor = self.conn.cursor()
@@ -71,6 +80,134 @@ class GiftOperations(commands.Cog):
         """)
         self.conn.commit()
 
+    # Start the periodic scraping task
+        self.scrape_codes_loop.start()
+
+    def cog_unload(self):
+        """Cancel the periodic task when the cog is unloaded."""
+        self.scrape_codes_loop.cancel()
+
+
+    @tasks.loop(minutes=10)
+    async def scrape_codes_loop(self):
+        """Periodic task to scrape for new gift codes."""
+        print("Running periodic scrape for gift codes...")
+        new_codes = self.fetch_gift_codes_from_web()
+        if not new_codes:
+            print("No new codes found.")
+            return
+
+        added_codes = self.store_gift_codes_in_db(new_codes)
+        if added_codes:
+            self.send_to_discord(added_codes)
+            print(f"New codes added and sent to Discord: {added_codes}")
+
+        else:
+            print("All codes were already in the database.")
+
+    @scrape_codes_loop.before_loop
+    async def before_scrape_codes_loop(self):
+        """Wait until the bot is ready before starting the loop."""
+        print("Waiting for bot to be ready...")
+        await self.bot.wait_until_ready()
+
+    def fetch_gift_codes_from_web(self):
+        """Scrape gift codes from the target website."""
+        url = "https://www.wosrewards.com/"
+        try:
+            response = requests.get(url, timeout=10)
+            response.raise_for_status()
+            soup = BeautifulSoup(response.text, "html.parser")
+            code_elements = soup.select("h5.font-bold")  # Adjust the selector as needed
+            print(f"Scraped {len(code_elements)} gift codes.")
+            codes = [element.text.strip() for element in code_elements]
+            print(f"Gift codes: {codes}")
+            return codes
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching gift codes: {e}")
+            return []
+
+    def store_gift_codes_in_db(self, new_codes):
+        """Store gift codes in the database if they are new."""
+        added_codes = []
+        for code in new_codes:
+            self.cursor.execute("SELECT 1 FROM gift_codes WHERE giftcode = ?", (code,))
+            if self.cursor.fetchone():
+                # Code already exists, skip it
+                continue
+
+            # Insert the new code
+            self.cursor.execute(
+                "INSERT INTO gift_codes (giftcode, date) VALUES (?, ?)",
+                (code, datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")),
+            )
+            self.conn.commit()
+            added_codes.append(code)
+        return added_codes  # Return only the newly added codes
+
+    def send_to_discord(self, new_codes):
+        """Send newly added gift codes to Discord."""
+        if not new_codes:
+            return
+
+        # Send alert
+        alert_webhook = DiscordWebhook(url=WEBHOOK_URL, content="🎁 New Gift Codes Available!")
+        alert_webhook.execute()
+
+        # Send each code as a separate message
+        for code in new_codes:
+            code_webhook = DiscordWebhook(url=WEBHOOK_URL, content=code)
+            code_webhook.execute()
+
+            # Distribute the new code to all alliances
+            asyncio.create_task(self.distribute_code_to_all_alliances(code))
+
+    async def distribute_code_to_all_alliances(self, giftcode):
+        """Distribute the new gift code to all members of all alliances."""
+        self.alliance_cursor.execute("SELECT alliance_id FROM alliance_list")
+        alliances = self.alliance_cursor.fetchall()
+
+        for alliance in alliances:
+            alliance_id = alliance[0]
+            await self.use_giftcode_for_alliance(alliance_id, giftcode)
+
+    @app_commands.command(name="force_scrape", description="Manually trigger the gift code scraper.")
+    async def force_scrape(self, interaction: discord.Interaction):
+        print("Force scraping for new gift codes...")
+        try:
+            await interaction.response.defer()  # Prevent timeout while processing
+            await interaction.followup.send("🔄 Scraping for new gift codes...")
+
+            new_codes = self.fetch_gift_codes_from_web()
+            print(f"New codes found: {new_codes}")
+            if not new_codes:
+                await interaction.followup.send("❌ No new gift codes found.")
+                return
+
+            added_codes = self.store_gift_codes_in_db(new_codes)
+            if added_codes:
+                self.send_to_discord(added_codes)
+                await interaction.followup.send(f"✅ Sent {len(added_codes)} new codes to Discord!")
+            else:
+                await interaction.followup.send("📭 All scraped codes were already recorded.")
+        except Exception as e:
+            print(f"Error in force_scrape: {e}")
+            await interaction.followup.send("❌ An error occurred while processing the command.")
+
+    @app_commands.command(name="show_codes", description="Show all stored gift codes.")
+    async def show_codes(self, interaction: discord.Interaction):
+        await interaction.response.defer()  # Prevent timeout
+
+        self.cursor.execute("SELECT giftcode, date FROM gift_codes")
+        codes = self.cursor.fetchall()
+
+        if not codes:
+            await interaction.followup.send("📭 No gift codes are currently stored.")
+            return
+
+        message = "**Stored Gift Codes:**\n" + "\n".join([f"`{code}` (added on {date})" for code, date in codes])
+        await interaction.followup.send(message)
+
         self.log_directory = 'log'
         if not os.path.exists(self.log_directory):
             os.makedirs(self.log_directory)
@@ -105,7 +242,7 @@ class GiftOperations(commands.Cog):
     @discord.ext.commands.Cog.listener()
     async def on_message(self, message: discord.Message):
         try:
-            if message.author.bot or not message.guild:
+            if message.author.bot or not message.guild or message.content == "🎁 New Gift Codes Available!":
                 return
 
             self.cursor.execute("SELECT alliance_id FROM giftcode_channel WHERE channel_id = ?", (message.channel.id,))
