@@ -642,7 +642,7 @@ class AllianceMemberOperations(commands.Cog):
                             member_list = ""
                             for idx, (fid, nickname, furnace_lv) in enumerate(chunk, start=page * members_per_page + 1):
                                 level = self.cog.level_mapping.get(furnace_lv, str(furnace_lv))
-                                member_list += f"**{idx:02d}.** 👤 {nickname}\n└ ⚔️ `FC: {level}`\n\n"
+                                member_list += f"**{idx:02d}.** 👤 {nickname}\n└ ⚔️ `FC: {level}` | `FID: {fid}`\n\n" 
 
                             embed.description += member_list
                             
