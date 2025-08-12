@@ -1,0 +1,12 @@
+services:
+  wos-discord-bot:
+    image: python:3.12.4-alpine
+    container_name: wos-discord-bot
+    environment:
+      - BOT_TOKEN=pasteHereYourDiscordBotToken
+      - AUTO_UPDATE=false # set to true, if you want to automatically update after restarting container
+    volumes:
+      - ./:/app
+    working_dir: /app
+    command: python main.py
+    restart: unless-stopped
